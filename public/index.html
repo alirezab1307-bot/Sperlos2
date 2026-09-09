@@ -1809,7 +1809,8 @@ function renderApp(){
       <div>${navHtml}</div>
       <div class="sidebar-footer">
         <div class="user-chip"><span class="dot"></span> ${esc(SESSION.name)}</div>
-        <button class="btn btn-outline btn-block btn-sm" style="margin-top:8px;background:transparent;color:#EDE7D8;border-color:rgba(255,255,255,.25)" onclick="logout()">خروج از حساب</button>
+        ${SESSION.role==='admin'?`<button class="btn btn-outline btn-block btn-sm" style="margin-top:8px;background:transparent;color:#EDE7D8;border-color:rgba(255,255,255,.25)" onclick="openMyAccountModal()">✏️ ویرایش نام کاربری / رمز من</button>`:''}
+        <button class="btn btn-outline btn-block btn-sm" style="margin-top:6px;background:transparent;color:#EDE7D8;border-color:rgba(255,255,255,.25)" onclick="logout()">خروج از حساب</button>
       </div>
     </div>
     <div class="main">
@@ -2011,6 +2012,39 @@ async function deleteAgentAccount(id){
     await apiFetch('/api/accounts/'+id, {method:'DELETE'});
     toast('حساب حذف شد'); await loadAll(); renderApp();
   }catch(e){ toast('خطا در حذف حساب'); }
+}
+
+/* =========================================================================
+   ویرایش نام‌کاربری/رمز خودم — فقط برای مدیر (مشاوران این اجازه را ندارند؛
+   نام‌کاربری/رمز مشاوران را فقط مدیر از صفحه‌ی «مدیریت حساب مشاوران» تعیین می‌کند)
+   ========================================================================= */
+function openMyAccountModal(){
+  const root=document.getElementById('overlay-root');
+  root.innerHTML=`<div class="modal"><h3>ویرایش اطلاعات ورود من</h3>
+    <div class="form-grid">
+      <div class="field full"><label>نام و نام خانوادگی</label><input type="text" id="my-acc-name" value="${esc(SESSION.name)}"></div>
+      <div class="field full"><label>نام کاربری</label><input type="text" id="my-acc-username" value="${esc(SESSION.username||'')}"></div>
+      <div class="field full"><label>رمز عبور جدید (اختیاری — اگر نمی‌خواهید عوض شود، خالی بگذارید)</label><input type="password" id="my-acc-password" placeholder="فقط در صورت تغییر پر کنید"></div>
+    </div>
+    <div class="modal-actions"><button class="btn btn-outline" onclick="closeModal()">انصراف</button><button class="btn btn-primary" onclick="saveMyAccount()">ذخیره</button></div>
+  </div>`;
+  root.classList.add('show');
+}
+async function saveMyAccount(){
+  const name=(document.getElementById('my-acc-name').value||'').trim();
+  const username=(document.getElementById('my-acc-username').value||'').trim().toLowerCase();
+  const password=document.getElementById('my-acc-password').value||'';
+  if(!name||!username){ toast('نام و نام کاربری را پر کنید'); return; }
+  if(password && password.length<4){ toast('رمز عبور جدید باید حداقل ۴ کاراکتر باشد'); return; }
+  const body={name, username};
+  if(password) body.password=password;
+  try{
+    const r = await apiFetch('/api/me', {method:'PUT', body: JSON.stringify(body)});
+    SESSION.name=r.account.name; SESSION.username=r.account.username;
+    toast('اطلاعات ورود شما به‌روزرسانی شد ✓'); closeModal(); renderApp();
+  }catch(e){
+    toast(e.body && e.body.error==='username_taken' ? 'این نام کاربری قبلاً استفاده شده' : 'خطا در ذخیره');
+  }
 }
 
 /* =========================================================================

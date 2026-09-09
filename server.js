@@ -252,6 +252,25 @@ const server = http.createServer(async (req, res) => {
     if (pathname === '/api/me' && req.method === 'GET') {
       return sendJson(res, 200, { account: publicAccount(authed.acc) });
     }
+    if (pathname === '/api/me' && req.method === 'PUT') {
+      if (authed.acc.role !== 'admin') return sendJson(res, 403, { error: 'forbidden' }); // فقط مدیر حق ویرایش اطلاعات ورود خودش را دارد؛ مشاوران هیچ‌وقت
+      const body = await readBody(req);
+      const accounts = getAccounts();
+      const acc = accounts.find(a => a.id === authed.acc.id);
+      if (!acc) return sendJson(res, 404, { error: 'not_found' });
+      if (body.name) acc.name = body.name;
+      if (body.username) {
+        const uname = String(body.username).toLowerCase();
+        if (accounts.some(a => a.username === uname && a.id !== acc.id)) return sendJson(res, 400, { error: 'username_taken' });
+        acc.username = uname;
+      }
+      if (body.password) {
+        if (String(body.password).length < 4) return sendJson(res, 400, { error: 'weak_password' });
+        acc.passwordHash = hashPassword(body.password);
+      }
+      await setAccounts(accounts);
+      return sendJson(res, 200, { account: publicAccount(acc) });
+    }
     if (pathname === '/api/logout' && req.method === 'POST') {
       await removeSession(authed.token);
       return sendJson(res, 200, { ok: true });
