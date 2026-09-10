@@ -321,6 +321,7 @@ const STORAGE_KEYS = {
 
 let DB = { files:[], customers:[], mMelk:[], mSaz:[], sazBank:[], cRent:[], cSale:[], cMosh:[], cOther:[], settings:{ conversionRate:2.5, defaultFollowupDays:3 }, backupMeta:{}, accounts:[], opportunities:[], officeCustomers:[] };
 let SESSION = null; // {role:'admin'|'agent', name:'...'}
+let SERVER_HEALTH = { ok:false, backend:'file', smsConfigured:false };
 let UI = { page:'dashboard', tab:{}, search:{}, sort:{}, priceMin:{}, priceMax:{}, filterAgent:'' , sidebarOpen:false};
 
 function uid(){ return 'id_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,8); }
@@ -453,6 +454,7 @@ async function loadAll(){
   if(SESSION && SESSION.role==='admin'){
     try{ const r = await apiFetch('/api/accounts'); DB.accounts = r.accounts||[]; }catch(e){ DB.accounts = DB.accounts||[]; }
   }
+  try{ const h = await fetch(API_BASE+'/api/health'); SERVER_HEALTH = await h.json(); }catch(e){ /* بی‌صدا رد شو */ }
 }
 async function saveCollection(name){
   if(name==='accounts') return; // حساب‌ها از مسیر اختصاصی /api/accounts مدیریت می‌شوند، نه اینجا
@@ -575,6 +577,9 @@ function opportunityFields(dealType, propType){
   const f = fileFields(dealType, propType).slice();
   f.push({key:'__opp_alarm_sep', label:'پیگیری فرصت', type:'section'});
   f.push({key:'nextFollowupDate', label:'تاریخ پیگیری بعدی', type:'date', required:true});
+  f.push({key:'__opp_sms_sep', label:'پیامک خودکار یادآوری', type:'section'});
+  f.push({key:'smsEnabled', label:'در همان تاریخ پیگیری بالا، پیامک خودکار به مالک ارسال شود', type:'checkbox'});
+  f.push({key:'smsMessage', label:'متن پیامک — می‌توانید از {نام_مالک} {آدرس} {تاریخ_پیگیری} استفاده کنید', type:'textarea', span:'full', showIf:d=>d.smsEnabled});
   return f;
 }
 
@@ -625,6 +630,9 @@ function contractFields(kind){
       {key:'agentSharePercent', label:'سهم مشاور (٪)', type:'number'},
       {key:'__renew_sep', label:'یادآوری تمدید', type:'section'},
       {key:'renewalAlarmDays', label:'یادآوری چند روز قبل از پایان؟ (پیش‌فرض ۳۰)', type:'number'},
+      {key:'__sms_sep', label:'پیامک خودکار یادآوری', type:'section'},
+      {key:'smsEnabled', label:'در همان روزِ یادآوری بالا، پیامک خودکار به مالک و مستاجر ارسال شود', type:'checkbox'},
+      {key:'smsMessage', label:'متن پیامک — می‌توانید از {نام_مالک} {نام_مستاجر} {آدرس} {تاریخ_پایان} {رهن} {اجاره} استفاده کنید', type:'textarea', span:'full', showIf:d=>d.smsEnabled},
       {key:'notes', label:'توضیحات', type:'textarea', span:'full'},
     ];
   }
@@ -975,19 +983,29 @@ function customerCardHtml(item, opts){
 
 function genericToolbarHtml(scopeKey, opts){
   opts = opts||{};
+  const sid = 'tb-search-'+scopeKey, minId = 'tb-min-'+scopeKey, maxId = 'tb-max-'+scopeKey;
   return `
   <div class="toolbar">
-    <input type="text" class="grow" placeholder="جستجو (${opts.searchHint||'نام / آدرس / متراژ'})" value="${esc(UI.search[scopeKey]||'')}" oninput="UI.search['${scopeKey}']=this.value; renderApp();">
+    <input id="${sid}" type="text" class="grow" placeholder="جستجو (${opts.searchHint||'نام / آدرس / متراژ'})" value="${esc(UI.search[scopeKey]||'')}" oninput="UI.search['${scopeKey}']=this.value; refocusAfterRender('${sid}');">
     <select onchange="UI.sort['${scopeKey}']=this.value; renderApp();">
       <option value="">مرتب‌سازی</option>
       <option value="price_desc" ${UI.sort[scopeKey]==='price_desc'?'selected':''}>قیمت: زیاد به کم</option>
       <option value="price_asc" ${UI.sort[scopeKey]==='price_asc'?'selected':''}>قیمت: کم به زیاد</option>
       <option value="newest" ${UI.sort[scopeKey]==='newest'?'selected':''}>جدیدترین</option>
     </select>
-    <input type="number" placeholder="حداقل قیمت" value="${UI.priceMin[scopeKey]||''}" style="width:120px" oninput="UI.priceMin['${scopeKey}']=this.value; renderApp();">
-    <input type="number" placeholder="حداکثر قیمت" value="${UI.priceMax[scopeKey]||''}" style="width:120px" oninput="UI.priceMax['${scopeKey}']=this.value; renderApp();">
+    <input id="${minId}" type="number" placeholder="حداقل قیمت" value="${UI.priceMin[scopeKey]||''}" style="width:120px" oninput="UI.priceMin['${scopeKey}']=this.value; refocusAfterRender('${minId}');">
+    <input id="${maxId}" type="number" placeholder="حداکثر قیمت" value="${UI.priceMax[scopeKey]||''}" style="width:120px" oninput="UI.priceMax['${scopeKey}']=this.value; refocusAfterRender('${maxId}');">
     ${opts.extraRight||''}
   </div>`;
+}
+function refocusAfterRender(elementId){
+  renderApp();
+  const el = document.getElementById(elementId);
+  if(el){
+    el.focus();
+    const len = el.value.length;
+    try{ el.setSelectionRange(len, len); }catch(e){} // برای input[type=number] این متد پشتیبانی نمی‌شود، خطا را نادیده می‌گیریم
+  }
 }
 
 function applySearchSortFilter(list, scopeKey, searchFields, priceFn){
@@ -1136,7 +1154,11 @@ function resizeImageFile(file, maxW){
 
 function openContractModal(kind, existing){
   const meta = CONTRACT_MAP[kind];
-  const data = existing? Object.assign({}, existing) : { renewalAlarmDays: kind==='rent'||kind==='other'?30:undefined };
+  const data = existing? Object.assign({}, existing) : {
+    renewalAlarmDays: kind==='rent'||kind==='other'?30:undefined,
+    smsMessage: kind==='rent'? 'یادآوری اسپرلوس: قرارداد اجاره ملک به آدرس {آدرس} در تاریخ {تاریخ_پایان} به پایان می‌رسد. برای تمدید با دفتر تماس بگیرید.' : undefined,
+  };
+  const prevEndDate = existing ? existing.endDate : null;
   const photos = (data.photos||[]).slice();
   const extraHtml = `
     <div class="section-label" style="margin-top:14px">پیوست عکس قرارداد</div>
@@ -1145,6 +1167,8 @@ function openContractModal(kind, existing){
     <div class="photo-row" id="contract-photo-row"></div>`;
   openFormModal((existing?'ویرایش':'ثبت')+' قرارداد '+meta.label, contractFields(kind), data, async (formData)=>{
     formData.photos = photos;
+    // اگر تاریخ پایان قرارداد تغییر کرد (مثلاً تمدید شد)، اجازه بده پیامک یادآوری دوباره برای موعد جدید ارسال شود
+    if(existing && prevEndDate !== formData.endDate) formData.smsSent = false;
     if(existing){
       Object.assign(existing, formData); existing.updatedAt=nowIso();
     } else {
@@ -1472,6 +1496,9 @@ function opportunityCardHtml(item, opts){
     <div class="alarm-item ${overdue?'urgent':''}" style="margin-top:8px;padding:8px 10px;font-size:12px">
       ⏰ پیگیری بعدی: ${faDate(item.nextFollowupDate)}${overdue?' — <b>زمان تماس فرارسیده!</b>':''}
       ${opts.readonly? '' : `<button class="btn btn-emerald btn-sm" onclick="snoozeOpportunity('${item.id}')">تمدید ۳ روز</button>`}
+      ${item.smsEnabled? (item.smsSent
+        ? `<div style="margin-top:5px;font-size:11.5px;color:var(--emerald)">📱 پیامک یادآوری ارسال شد (${faDate(item.smsSentAt)})</div>`
+        : `<div style="margin-top:5px;font-size:11.5px;color:var(--muted)">📱 پیامک خودکار فعال — در تاریخ پیگیری به مالک ارسال می‌شود</div>`) : ''}
     </div>
     <div class="meta-line"><span>مشاور: ${esc(item.agentName||'-')}</span><span>ثبت: ${faDate(item.createdAt)}</span></div>
     <div class="card-actions">
@@ -1483,7 +1510,7 @@ function opportunityCardHtml(item, opts){
 }
 function addOpportunity(dealType, propType){
   openFormModal('فرصت آینده جدید — '+(dealType==='sale'?'فروش':'رهن و اجاره')+' / '+propTypeLabel(propType),
-    opportunityFields(dealType, propType), {nextFollowupDate: new Date(Date.now()+3*86400000).toISOString().slice(0,10)}, async (data)=>{
+    opportunityFields(dealType, propType), {nextFollowupDate: new Date(Date.now()+3*86400000).toISOString().slice(0,10), smsMessage:'یادآوری اسپرلوس: پیگیری ملک شما به آدرس {آدرس} — {نام_مالک} عزیز، برای هماهنگی با دفتر تماس بگیرید.'}, async (data)=>{
       data.id=uid(); data.dealType=dealType; data.propType=propType; data.agentName=SESSION.name;
       data.createdAt=nowIso(); data.updatedAt=nowIso();
       if(dealType==='sale'){
@@ -1495,11 +1522,13 @@ function addOpportunity(dealType, propType){
 }
 function editOpportunity(id){
   const item = DB.opportunities.find(x=>x.id===id); if(!item) return;
+  const prevDate = item.nextFollowupDate;
   openFormModal('ویرایش فرصت آینده', opportunityFields(item.dealType, item.propType), item, async (data)=>{
     if(item.dealType==='sale'){
       const area = Number(data.area||data.buildingArea||0);
       data.pricePerMeter = area>0? Math.round(Number(data.totalPrice||0)/area):0;
     }
+    if(prevDate !== data.nextFollowupDate) data.smsSent = false;
     Object.assign(item, data); item.updatedAt=nowIso();
     await saveCollection('opportunities'); toast('ذخیره شد ✓'); renderApp();
   });
@@ -1511,6 +1540,7 @@ async function deleteOpportunity(id){
 async function snoozeOpportunity(id){
   const item = DB.opportunities.find(x=>x.id===id); if(!item) return;
   item.nextFollowupDate = new Date(Date.now()+3*86400000).toISOString().slice(0,10);
+  item.smsSent = false;
   item.updatedAt = nowIso();
   await saveCollection('opportunities'); toast('پیگیری ۳ روز به تعویق افتاد ✓'); renderApp();
 }
@@ -1631,13 +1661,36 @@ function pageSettings(){
     <p style="font-size:12.5px;color:var(--muted);margin:0 0 14px;line-height:1.8">تم انتخابی فقط روی همین گوشی/سیستم شما ذخیره می‌شود و روی بقیه‌ی همکاران تاثیری ندارد.</p>
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px">${themeCards}</div>
   </div>
-  <div class="card" style="max-width:480px">
+  <div class="card" style="max-width:480px;margin-bottom:16px">
     <div class="card-title" style="margin-bottom:12px">⚙️ تنظیمات کلی دفتر</div>
     <div class="field"><label>نرخ پیش‌فرض تبدیل رهن به اجاره (٪ ماهانه)</label>
       <input type="number" step="0.1" value="${DB.settings.conversionRate}" onchange="updateSetting('conversionRate', this.value)"></div>
     <div class="field"><label>دوره پیش‌فرض پیگیری مشتری (روز)</label>
       <input type="number" value="${DB.settings.defaultFollowupDays}" onchange="updateSetting('defaultFollowupDays', this.value)"></div>
-  </div>`;
+  </div>
+  ${SESSION.role==='admin'? `
+  <div class="card" style="max-width:480px">
+    <div class="card-title" style="margin-bottom:12px">📱 وضعیت پیامک خودکار</div>
+    ${SERVER_HEALTH.smsConfigured
+      ? `<div class="alarm-item" style="background:var(--ok-bg);border-color:var(--emerald)"><span style="color:var(--emerald);font-weight:700">✓ سرویس پیامک متصل و فعال است</span></div>`
+      : `<div class="alarm-item urgent"><span>⚠️ سرویس پیامک هنوز پیکربندی نشده — پیامک‌ها فقط شبیه‌سازی می‌شوند و واقعاً ارسال نمی‌شوند.</span></div>
+         <p style="font-size:12px;color:var(--muted);margin:10px 0 0;line-height:1.8">برای فعال‌سازی، متغیر محیطی <code>KAVENEGAR_API_KEY</code> را در تنظیمات سرور (Render/لیارا) اضافه کنید. راهنمای کامل در فایل README.md همراه پروژه است.</p>`}
+    <div class="field" style="margin-top:14px"><label>شماره تست (برای بررسی درست کار کردن)</label><input type="tel" id="sms-test-phone" placeholder="09xxxxxxxxx"></div>
+    <div class="field"><label>متن پیام تست</label><textarea id="sms-test-message" rows="2">این یک پیامک آزمایشی از سامانه اسپرلوس است.</textarea></div>
+    <button class="btn btn-gold btn-block" onclick="sendTestSms()">ارسال پیامک تست</button>
+  </div>`:''}`;
+}
+async function sendTestSms(){
+  const phone = document.getElementById('sms-test-phone').value.trim();
+  const message = document.getElementById('sms-test-message').value.trim();
+  if(!phone||!message){ toast('شماره و متن پیام را وارد کنید'); return; }
+  try{
+    const r = await apiFetch('/api/sms/test', {method:'POST', body: JSON.stringify({phone,message})});
+    if(r.ok) toast('پیامک ارسال شد ✓');
+    else if(r.error==='not_configured') toast('سرویس پیامک پیکربندی نشده (فقط شبیه‌سازی شد — در لاگ سرور ببینید)');
+    else if(r.error==='invalid_phone') toast('شماره موبایل نامعتبر است');
+    else toast('خطا در ارسال — جزئیات در لاگ سرور');
+  }catch(e){ toast('خطا در اتصال به سرور'); }
 }
 async function updateSetting(key, val){ DB.settings[key]=Number(val); await saveCollection('settings'); toast('ذخیره شد ✓'); }
 /* =========================================================================
@@ -1731,8 +1784,15 @@ function contractCardHtml(item, kind){
     const alarmDays = item.renewalAlarmDays!==undefined && item.renewalAlarmDays!==''? Number(item.renewalAlarmDays):30;
     const left = daysBetween(new Date().toISOString(), item.endDate);
     const urgent = left<=alarmDays;
+    let smsLine='';
+    if(kind==='rent' && item.smsEnabled){
+      smsLine = item.smsSent
+        ? `<div style="margin-top:5px;font-size:11.5px;color:var(--emerald)">📱 پیامک یادآوری ارسال شد (${faDate(item.smsSentAt)})</div>`
+        : `<div style="margin-top:5px;font-size:11.5px;color:var(--muted)">📱 پیامک خودکار فعال — در آستانه‌ی موعد به مالک و مستاجر ارسال می‌شود</div>`;
+    }
     alarmHtml = `<div class="alarm-item ${urgent?'urgent':''}" style="margin-top:8px;padding:8px 10px;font-size:12px">
       ⏰ پایان قرارداد: ${faDate(item.endDate)} (${left>=0?left+' روز مانده':'منقضی شده'}) ${urgent?'— <b>زمان تماس برای تمدید فرارسیده!</b>':''}
+      ${smsLine}
     </div>`;
   }
   const photos = item.photos||[];

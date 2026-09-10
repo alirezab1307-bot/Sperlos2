@@ -201,7 +201,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'OPTIONS') { return sendJson(res, 200, { ok: true }); }
 
   if (pathname === '/api/health' && req.method === 'GET') {
-    return sendJson(res, 200, { ok: true, backend: BACKEND });
+    return sendJson(res, 200, { ok: true, backend: BACKEND, smsConfigured: SMS_CONFIGURED });
   }
 
   if (!pathname.startsWith('/api/')) {
@@ -321,6 +321,15 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, { accounts: getAccounts().map(publicAccount) });
     }
 
+    /* ---------- تست ارسال پیامک (فقط مدیر) ---------- */
+    if (pathname === '/api/sms/test' && req.method === 'POST') {
+      if (authed.acc.role !== 'admin') return sendJson(res, 403, { error: 'forbidden' });
+      const { phone, message } = await readBody(req);
+      if (!phone || !message) return sendJson(res, 400, { error: 'invalid_input' });
+      const result = await sendSms(phone, message);
+      return sendJson(res, 200, result);
+    }
+
     /* ---------- ذخیره‌سازی مشترک key-value (فایل‌ها، مشتریان، قراردادها، تنظیمات و ...) ---------- */
     if (pathname.startsWith('/api/storage/') && req.method === 'GET') {
       const key = decodeURIComponent(pathname.slice('/api/storage/'.length));
@@ -344,10 +353,120 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
+/* =================================================================
+   پیامک خودکار (کاوه‌نگار) — یادآوری پایان قرارداد رهن‌واجاره و
+   پیگیری بانک فرصت‌های آینده. با متغیرهای محیطی زیر پیکربندی می‌شود:
+     KAVENEGAR_API_KEY   (اجباری برای فعال شدن ارسال واقعی)
+     KAVENEGAR_SENDER    (اختیاری؛ اگر ندهید، خط پیش‌فرض حساب کاوه‌نگار استفاده می‌شود)
+   اگر KAVENEGAR_API_KEY تنظیم نشده باشد، سرور بالا می‌آید ولی به‌جای
+   ارسال واقعی فقط در لاگ می‌نویسد (تا هیچ خطایی کاربر را متوقف نکند).
+   ================================================================= */
+const SMS_API_KEY = process.env.KAVENEGAR_API_KEY || '';
+const SMS_SENDER = process.env.KAVENEGAR_SENDER || '';
+const SMS_CONFIGURED = !!SMS_API_KEY;
+
+function normalizeIranPhone(raw) {
+  if (!raw) return null;
+  let p = String(raw).replace(/[^\d+]/g, '');
+  if (p.startsWith('+98')) p = '0' + p.slice(3);
+  else if (p.startsWith('98') && p.length === 12) p = '0' + p.slice(2);
+  if (!/^09\d{9}$/.test(p)) return null; // فقط شماره موبایل معتبر ایران
+  return p;
+}
+
+async function sendSms(toRaw, message) {
+  const to = normalizeIranPhone(toRaw);
+  if (!to) { console.log('⚠️ شماره نامعتبر برای پیامک، رد شد:', toRaw); return { ok: false, error: 'invalid_phone' }; }
+  if (!SMS_CONFIGURED) {
+    console.log(`ℹ️ (شبیه‌سازی — کاوه‌نگار پیکربندی نشده) پیامک به ${to}:\n${message}`);
+    return { ok: false, error: 'not_configured' };
+  }
+  try {
+    const params = new URLSearchParams({ receptor: to, message });
+    if (SMS_SENDER) params.set('sender', SMS_SENDER);
+    const url = `https://api.kavenegar.com/v1/${SMS_API_KEY}/sms/send.json?${params.toString()}`;
+    const r = await fetch(url);
+    const body = await r.json().catch(() => null);
+    if (!r.ok || !body || body.return?.status !== 200) {
+      console.error('❌ خطای ارسال پیامک کاوه‌نگار:', to, body || r.status);
+      return { ok: false, error: 'provider_error', body };
+    }
+    console.log('✅ پیامک ارسال شد به', to);
+    return { ok: true, body };
+  } catch (err) {
+    console.error('❌ خطای شبکه هنگام ارسال پیامک:', err.message);
+    return { ok: false, error: 'network_error' };
+  }
+}
+
+function fillTemplate(tpl, vars) {
+  let out = String(tpl || '');
+  Object.keys(vars).forEach(k => { out = out.split('{' + k + '}').join(vars[k] == null ? '' : String(vars[k])); });
+  return out;
+}
+function faDateSimple(iso) {
+  if (!iso) return '-';
+  try { return new Date(iso).toLocaleDateString('fa-IR'); } catch (e) { return iso; }
+}
+function daysUntil(iso) {
+  if (!iso) return Infinity;
+  const d = new Date(iso); d.setHours(0, 0, 0, 0);
+  const now = new Date(); now.setHours(0, 0, 0, 0);
+  return Math.round((d - now) / (1000 * 60 * 60 * 24));
+}
+
+async function processRentContractsSms() {
+  const key = 'sl_contracts_rent';
+  const list = (await storeGet(key)) || [];
+  let changed = false;
+  for (const c of list) {
+    if (!c.smsEnabled || c.smsSent || !c.endDate) continue;
+    const threshold = c.renewalAlarmDays !== undefined && c.renewalAlarmDays !== '' ? Number(c.renewalAlarmDays) : 30;
+    const left = daysUntil(c.endDate);
+    if (left <= threshold) {
+      const vars = { نام_مالک: c.ownerName || '', نام_مستاجر: c.tenantName || '', آدرس: c.address || '', تاریخ_پایان: faDateSimple(c.endDate), رهن: c.rahnPrice || '', اجاره: c.ejarePrice || '' };
+      const msg = fillTemplate(c.smsMessage || 'یادآوری اسپرلوس: قرارداد اجاره ملک شما به آدرس {آدرس} در تاریخ {تاریخ_پایان} به پایان می‌رسد.', vars);
+      const results = [];
+      if (c.ownerPhone) results.push(await sendSms(c.ownerPhone, msg));
+      if (c.tenantPhone) results.push(await sendSms(c.tenantPhone, msg));
+      c.smsSent = true;
+      c.smsSentAt = new Date().toISOString();
+      changed = true;
+    }
+  }
+  if (changed) await storeSet(key, list);
+}
+
+async function processOpportunitiesSms() {
+  const key = 'sl_opportunities';
+  const list = (await storeGet(key)) || [];
+  let changed = false;
+  for (const o of list) {
+    if (!o.smsEnabled || o.smsSent || !o.nextFollowupDate) continue;
+    if (daysUntil(o.nextFollowupDate) <= 0) {
+      const vars = { نام_مالک: o.ownerName || '', آدرس: o.address || '', تاریخ_پیگیری: faDateSimple(o.nextFollowupDate) };
+      const msg = fillTemplate(o.smsMessage || 'یادآوری اسپرلوس: پیگیری ملک شما به آدرس {آدرس} در تاریخ {تاریخ_پیگیری}.', vars);
+      if (o.ownerPhone) await sendSms(o.ownerPhone, msg);
+      o.smsSent = true;
+      o.smsSentAt = new Date().toISOString();
+      changed = true;
+    }
+  }
+  if (changed) await storeSet(key, list);
+}
+
+async function runSmsScheduler() {
+  try { await processRentContractsSms(); } catch (e) { console.error('خطا در پردازش پیامک قراردادها:', e.message); }
+  try { await processOpportunitiesSms(); } catch (e) { console.error('خطا در پردازش پیامک فرصت‌های آینده:', e.message); }
+}
+
 initStorage().then(() => {
   server.listen(PORT, () => {
     console.log(`✅ سرور اسپرلوس روی پورت ${PORT} اجرا شد (حالت: ${BACKEND})`);
     console.log(`   در همین سیستم: http://localhost:${PORT}`);
+    console.log(SMS_CONFIGURED ? '✅ پیامک کاوه‌نگار پیکربندی شده' : 'ℹ️  پیامک پیکربندی نشده (KAVENEGAR_API_KEY تنظیم نیست) — فقط در لاگ شبیه‌سازی می‌شود');
+    setTimeout(runSmsScheduler, 10000); // ۱۰ ثانیه بعد از بالا آمدن، اولین بررسی
+    setInterval(runSmsScheduler, 5 * 60 * 1000); // هر ۵ دقیقه یک‌بار بررسی پیامک‌های موعدرسیده
   });
 }).catch((err) => {
   console.error('❌ اتصال به دیتابیس برقرار نشد:', err.message);
