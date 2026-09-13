@@ -330,6 +330,35 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, result);
     }
 
+    /* ---------- تغییر سریع وضعیت یک فایل ملکی (بدون نیاز به ارسال کل آرایه فایل‌ها) ----------
+       این مسیر جدا از /api/storage است چون: ۱) فقط یک فیلد کوچک رد و بدل می‌شود (نه کل
+       لیست فایل‌ها که ممکن است شامل عکس‌های حجیم قرارداد باشد) پس خیلی سریع‌تر است،
+       و ۲) تغییر روی نسخه‌ی معتبر سرور انجام می‌شود، نه نسخه‌ای که کلاینت از قبل نزد
+       خودش داشته؛ در نتیجه اگر همزمان کاربر دیگری فایل دیگری را اضافه/ویرایش کرده باشد،
+       آن تغییرات با یک ارسال قدیمی از کلاینت این یکی رونویسی (overwrite) نمی‌شوند. */
+    if (/^\/api\/files\/[^/]+\/status$/.test(pathname) && (req.method === 'PATCH' || req.method === 'PUT')) {
+      const id = pathname.split('/')[3];
+      const { status } = await readBody(req);
+      const ALLOWED_STATUSES = ['active', 'negotiating', 'contracted', 'closed', 'expired'];
+      if (!ALLOWED_STATUSES.includes(status)) return sendJson(res, 400, { error: 'invalid_status' });
+      const key = 'sl_files';
+      const list = (await storeGet(key)) || [];
+      const item = list.find(f => f.id === id);
+      if (!item) return sendJson(res, 404, { error: 'not_found' });
+      if (authed.acc.role !== 'admin' && item.agentName !== authed.acc.name) {
+        return sendJson(res, 403, { error: 'forbidden' });
+      }
+      const ARCHIVE_STATUSES = ['closed', 'expired'];
+      const wasArchived = ARCHIVE_STATUSES.includes(item.status || 'active');
+      item.status = status;
+      item.updatedAt = new Date().toISOString();
+      const nowArchived = ARCHIVE_STATUSES.includes(status);
+      if (nowArchived && !wasArchived) item.archivedAt = item.updatedAt;
+      if (!nowArchived) item.archivedAt = null;
+      await storeSet(key, list);
+      return sendJson(res, 200, { ok: true, item });
+    }
+
     /* ---------- ذخیره‌سازی مشترک key-value (فایل‌ها، مشتریان، قراردادها، تنظیمات و ...) ---------- */
     if (pathname.startsWith('/api/storage/') && req.method === 'GET') {
       const key = decodeURIComponent(pathname.slice('/api/storage/'.length));

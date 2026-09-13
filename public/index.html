@@ -345,17 +345,41 @@ function fileStatusOptionsHtml(item){
 }
 const ARCHIVE_STATUSES = ['closed','expired'];
 function isArchivedFile(item){ return ARCHIVE_STATUSES.includes((item&&item.status)||'active'); }
+let __statusSaveInFlight = 0; // وقتی >۰ است، به‌روزرسانی دوره‌ای از سرور موقتاً متوقف می‌شود تا تغییر خوش‌بینانه‌ی محلی رونویسی (overwrite) نشود
 async function setFileStatus(id, status){
   const item = DB.files.find(f=>f.id===id); if(!item) return;
-  const wasArchived = isArchivedFile(item);
+  const prevStatus = item.status || 'active';
+  const prevArchivedAt = item.archivedAt;
+  if(prevStatus === status) return;
+
+  // ۱) به‌روزرسانی خوش‌بینانه: فوراً همین‌جا نمایش داده می‌شود، بدون منتظر ماندن برای پاسخ سرور
   item.status = status;
   item.updatedAt = nowIso();
-  const nowArchived = isArchivedFile(item);
-  if(nowArchived && !wasArchived) item.archivedAt = nowIso();
+  const nowArchived = ARCHIVE_STATUSES.includes(status);
+  if(nowArchived && !ARCHIVE_STATUSES.includes(prevStatus)) item.archivedAt = item.updatedAt;
   if(!nowArchived) item.archivedAt = null;
-  await saveCollection('files');
-  toast('وضعیت فایل به‌روزرسانی شد ✓');
   renderApp();
+
+  // شماره‌ی این درخواست برای همین فایل؛ اگر کاربر قبل از برگشتن پاسخ دوباره وضعیت را عوض کند،
+  // پاسخ این درخواست قدیمی نادیده گرفته می‌شود تا آخرین کلیک همیشه برنده باشد
+  const myReq = (item.__statusReq = (item.__statusReq||0) + 1);
+  __statusSaveInFlight++;
+  try{
+    const r = await apiFetch('/api/files/'+encodeURIComponent(id)+'/status', {method:'PATCH', body: JSON.stringify({status})});
+    if(item.__statusReq === myReq && r && r.item){
+      item.status = r.item.status; item.updatedAt = r.item.updatedAt; item.archivedAt = r.item.archivedAt;
+      toast('وضعیت فایل به‌روزرسانی شد ✓');
+    }
+  }catch(e){
+    if(item.__statusReq === myReq){
+      // ناموفق بود؛ به وضعیت قبلی برگردان تا نمایش با واقعیت سرور یکی بماند
+      item.status = prevStatus; item.updatedAt = nowIso(); item.archivedAt = prevArchivedAt;
+      toast('خطا در ذخیره‌سازی وضعیت — دوباره تلاش کنید');
+    }
+  } finally {
+    __statusSaveInFlight--;
+    renderApp();
+  }
 }
 
 function uid(){ return 'id_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,8); }
@@ -504,6 +528,7 @@ let __lastSnapshot = '';
 async function pollForUpdates(){
   if(!SESSION) return;
   if(document.getElementById('overlay-root').classList.contains('show')) return; // وقتی فرمی باز است مزاحم نشو
+  if(__statusSaveInFlight>0) return; // وقتی تغییر وضعیت فایل در حال ذخیره است، صبر کن تا رونویسی نشود
   try{
     await loadAll();
     const snap = JSON.stringify({f:DB.files.length,c:DB.customers.length,cr:DB.cRent.length,cs:DB.cSale.length,cm:DB.cMosh.length,co:DB.cOther.length,mm:DB.mMelk.length,ms:DB.mSaz.length,sb:DB.sazBank.length,u:DB.files.map(x=>x.updatedAt), u2:DB.customers.map(x=>x.updatedAt)});
