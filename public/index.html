@@ -322,7 +322,41 @@ const STORAGE_KEYS = {
 let DB = { files:[], customers:[], mMelk:[], mSaz:[], sazBank:[], cRent:[], cSale:[], cMosh:[], cOther:[], settings:{ conversionRate:2.5, defaultFollowupDays:3 }, backupMeta:{}, accounts:[], opportunities:[], officeCustomers:[] };
 let SESSION = null; // {role:'admin'|'agent', name:'...'}
 let SERVER_HEALTH = { ok:false, backend:'file', smsConfigured:false };
-let UI = { page:'dashboard', tab:{}, search:{}, sort:{}, priceMin:{}, priceMax:{}, filterAgent:'' , sidebarOpen:false};
+let UI = { page:'dashboard', tab:{}, search:{}, sort:{}, priceMin:{}, priceMax:{}, filterAgent:'' , sidebarOpen:false, view:{}};
+
+/* ---------- وضعیت فایل‌های ملکی ---------- */
+const FILE_STATUS_ORDER = ['active','negotiating','contracted','closed','expired'];
+function fileStatusMeta(item){
+  const id = (item && item.status) || 'active';
+  const map = {
+    active:      { id:'active',      label:'فعال',                 emoji:'🟢', color:'#16a34a' },
+    negotiating: { id:'negotiating', label:'در حال مذاکره',        emoji:'🟡', color:'#ca8a04' },
+    contracted:  { id:'contracted',  label:'قرارداد شد',           emoji:'🔵', color:'#2563eb' },
+    closed:      { id:'closed',      label: (item && item.dealType==='sale') ? 'فروخته شد' : 'اجاره رفت', emoji:'🔴', color:'#dc2626' },
+    expired:     { id:'expired',     label:'منقضی / غیرفعال',      emoji:'⚫', color:'#4b5563' },
+  };
+  return map[id] || map.active;
+}
+function fileStatusOptionsHtml(item){
+  return FILE_STATUS_ORDER.map(id=>{
+    const meta = fileStatusMeta(Object.assign({}, item, {status:id}));
+    return `<option value="${id}" ${((item&&item.status)||'active')===id?'selected':''}>${meta.emoji} ${meta.label}</option>`;
+  }).join('');
+}
+const ARCHIVE_STATUSES = ['closed','expired'];
+function isArchivedFile(item){ return ARCHIVE_STATUSES.includes((item&&item.status)||'active'); }
+async function setFileStatus(id, status){
+  const item = DB.files.find(f=>f.id===id); if(!item) return;
+  const wasArchived = isArchivedFile(item);
+  item.status = status;
+  item.updatedAt = nowIso();
+  const nowArchived = isArchivedFile(item);
+  if(nowArchived && !wasArchived) item.archivedAt = nowIso();
+  if(!nowArchived) item.archivedAt = null;
+  await saveCollection('files');
+  toast('وضعیت فایل به‌روزرسانی شد ✓');
+  renderApp();
+}
 
 function uid(){ return 'id_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,8); }
 function nowIso(){ return new Date().toISOString(); }
@@ -445,7 +479,7 @@ async function loadAll(){
     storageGet(STORAGE_KEYS.settings), storageGet(STORAGE_KEYS.agentBackup),
     storageGet(STORAGE_KEYS.opportunities), storageGet(STORAGE_KEYS.officeCustomers)
   ]);
-  DB.files=files||[]; DB.customers=customers||[]; DB.mMelk=mMelk||[]; DB.mSaz=mSaz||[]; DB.sazBank=sazBank||[];
+  DB.files=(files||[]).map(f=>{ if(!f.status) f.status='active'; return f; }); DB.customers=customers||[]; DB.mMelk=mMelk||[]; DB.mSaz=mSaz||[]; DB.sazBank=sazBank||[];
   DB.cRent=cRent||[]; DB.cSale=cSale||[]; DB.cMosh=cMosh||[]; DB.cOther=cOther||[];
   DB.settings=settings||{ conversionRate:2.5, defaultFollowupDays:3 };
   DB.backupMeta=backupMeta||{};
@@ -918,6 +952,7 @@ function fileCardHtml(item, opts){
       ${item.paymentSchedule?`<br>💳 رویه پرداخت: ${esc(item.paymentSchedule)}`:''}
     </div>` : '';
   const docNotesHtml = (item.dealType==='sale' && item.documentStatus==='ندارد' && item.documentNotes) ? `<div class="desc-box">📄 توضیحات سند: ${esc(item.documentNotes)}</div>` : '';
+  const stMeta = fileStatusMeta(item);
   return `
   <div class="card" data-id="${item.id}">
     <div class="card-top">
@@ -925,7 +960,10 @@ function fileCardHtml(item, opts){
         <div class="card-title">${esc(item.ownerName||'بدون نام')}</div>
         <a class="phone-link" href="tel:${esc(item.ownerPhone||'')}">☎ ${esc(item.ownerPhone||'-')}</a>
       </div>
-      <span class="badge ${item.dealType==='sale'?'badge-gold':'badge-emerald'}">${item.dealType==='sale'?'فروش':'رهن و اجاره'} · ${propTypeLabel(item.propType)}</span>
+      <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end">
+        <span class="badge ${item.dealType==='sale'?'badge-gold':'badge-emerald'}">${item.dealType==='sale'?'فروش':'رهن و اجاره'} · ${propTypeLabel(item.propType)}</span>
+        <span class="badge" style="background:${stMeta.color}22;color:${stMeta.color}">${stMeta.emoji} ${stMeta.label}</span>
+      </div>
     </div>
     <div class="desc-box">📍 ${esc(item.address||'-')}</div>
     <div class="kv">${kvHtml}</div>
@@ -935,6 +973,9 @@ function fileCardHtml(item, opts){
     ${item.description?`<div class="desc-box">📝 ${esc(item.description)}</div>`:''}
     <div class="meta-line"><span>مشاور: ${esc(item.agentName||'-')}</span><span>ثبت: ${faDate(item.createdAt)}</span><span>آخرین ویرایش: ${faDate(item.updatedAt)}</span></div>
     <div class="card-actions">
+      <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--muted)">وضعیت:
+        <select onchange="setFileStatus('${item.id}', this.value)" style="padding:6px 8px;border-radius:8px;border:1px solid var(--line);background:var(--paper);font-size:12.5px">${fileStatusOptionsHtml(item)}</select>
+      </label>
       ${opts.readonly? '' : `<button class="btn btn-outline btn-sm" onclick="editFile('${item.id}')">✏️ ویرایش</button>
       <button class="btn btn-danger btn-sm" onclick="deleteFile('${item.id}')">🗑 حذف</button>`}
       <button class="btn btn-gold btn-sm" onclick='copyText(${JSON.stringify(fileCopyText(item))})'>📋 کپی مشخصات</button>
@@ -1029,6 +1070,7 @@ function addFile(dealType, propType){
   openFormModal('فایل جدید — '+(dealType==='sale'?'فروش':'رهن و اجاره')+' / '+propTypeLabel(propType),
     fileFields(dealType, propType), {}, async (data)=>{
       data.id=uid(); data.dealType=dealType; data.propType=propType; data.agentName=SESSION.name;
+      data.status = 'active';
       data.createdAt=nowIso(); data.updatedAt=nowIso();
       if(dealType==='sale'){
         const area = Number(data.area||data.buildingArea||0);
@@ -1213,7 +1255,7 @@ async function deleteContract(kind, id){
 function computeMatches(dealCategory){ // 'sale-buy' or 'rent'
   const results = []; // [{customer, matches:[{file, score}]}]
   const customers = DB.customers.filter(c=> (dealCategory==='rent'? c.dealType==='rent' : c.dealType==='buy'));
-  const files = DB.files.filter(f=> (dealCategory==='rent'? f.dealType==='rent' : f.dealType==='sale'));
+  const files = DB.files.filter(f=> !isArchivedFile(f) && (dealCategory==='rent'? f.dealType==='rent' : f.dealType==='sale'));
   customers.forEach(cust=>{
     const matches=[];
     files.filter(f=>f.propType===cust.propType).forEach(file=>{
@@ -1318,7 +1360,7 @@ function pageAgentDashboard(){
     </div>`).join('')}
   <div class="section-title">🕒 آخرین فایل‌ها و مشتریان</div>
   <div class="grid">
-    ${[...myFiles].sort((a,b)=>new Date(b.updatedAt)-new Date(a.updatedAt)).slice(0,4).map(f=>fileCardHtml(f)).join('')}
+    ${myFiles.filter(f=>!isArchivedFile(f)).sort((a,b)=>new Date(b.updatedAt)-new Date(a.updatedAt)).slice(0,4).map(f=>fileCardHtml(f)).join('')}
   </div>`;
 }
 /* =========================================================================
@@ -1331,7 +1373,10 @@ function pageAgentFiles(dealType){
   if(!opts.some(o=>o[0]===propType)) propType='apartment';
   UI.tab[scopeKeyBase] = propType;
   const scopeKey = scopeKeyBase+'_'+propType;
+  const viewKey = scopeKeyBase+'_view';
+  const view = UI.view[viewKey] || 'active';
   let list = DB.files.filter(f=>f.agentName===SESSION.name && f.dealType===dealType && f.propType===propType);
+  list = list.filter(f=> view==='archive' ? isArchivedFile(f) : !isArchivedFile(f));
   list = applySearchSortFilter(list, scopeKey, ['ownerName','address','area','totalArea','buildingArea'], fileMainPrice);
   const tabsHtml = opts.map(([k,label])=>`<button class="tab-btn ${propType===k?'active':''}" onclick="UI.tab['${scopeKeyBase}']='${k}';renderApp();">${label}</button>`).join('');
   return `
@@ -1340,8 +1385,12 @@ function pageAgentFiles(dealType){
     <div style="flex:1"></div>
     <button class="btn btn-primary btn-sm" onclick="addFile('${dealType}','${propType}')">+ فایل جدید</button>
   </div>
+  <div class="tabs" style="margin-top:-6px">
+    <button class="tab-btn ${view==='active'?'active':''}" onclick="UI.view['${viewKey}']='active';renderApp();">🗂 فایل‌های فعال</button>
+    <button class="tab-btn ${view==='archive'?'active':''}" onclick="UI.view['${viewKey}']='archive';renderApp();">📦 آرشیو (فروخته/منقضی)</button>
+  </div>
   ${genericToolbarHtml(scopeKey)}
-  ${list.length? `<div class="grid">${list.map(f=>fileCardHtml(f)).join('')}</div>` : `<div class="empty-state"><div class="ic">🗂</div>فایلی ثبت نشده است</div>`}
+  ${list.length? `<div class="grid">${list.map(f=>fileCardHtml(f)).join('')}</div>` : `<div class="empty-state"><div class="ic">🗂</div>${view==='archive'?'آرشیوی موجود نیست':'فایلی ثبت نشده است'}</div>`}
   `;
 }
 
@@ -1738,7 +1787,9 @@ function pageAdminOversightFiles(){
   if(!opts.some(o=>o[0]===propType)) propType='apartment';
   UI.tab.adminFilesDeal=dealType; UI.tab.adminFilesProp=propType;
   const scopeKey = 'admfiles_'+dealType+'_'+propType;
+  const view = UI.view.adminFilesView || 'active';
   let list = DB.files.filter(f=>f.dealType===dealType && f.propType===propType);
+  list = list.filter(f=> view==='archive' ? isArchivedFile(f) : !isArchivedFile(f));
   if(UI.filterAgent) list = list.filter(f=>f.agentName===UI.filterAgent);
   list = applySearchSortFilter(list, scopeKey, ['ownerName','address','agentName'], fileMainPrice);
   const agents = agentList();
@@ -1749,8 +1800,12 @@ function pageAdminOversightFiles(){
     <button class="tab-btn ${dealType==='sale'?'active':''}" onclick="UI.tab.adminFilesDeal='sale';renderApp();">فروش</button>
     ${propTabsHtml}
   </div>
+  <div class="tabs" style="margin-top:-6px">
+    <button class="tab-btn ${view==='active'?'active':''}" onclick="UI.view.adminFilesView='active';renderApp();">🗂 فایل‌های فعال</button>
+    <button class="tab-btn ${view==='archive'?'active':''}" onclick="UI.view.adminFilesView='archive';renderApp();">📦 آرشیو (فروخته/منقضی)</button>
+  </div>
   ${genericToolbarHtml(scopeKey, {extraRight:`<select onchange="UI.filterAgent=this.value; renderApp();"><option value="">همه مشاوران</option>${agents.map(a=>`<option value="${esc(a)}" ${UI.filterAgent===a?'selected':''}>${esc(a)}</option>`).join('')}</select>`})}
-  ${list.length? `<div class="grid">${list.map(f=>fileCardHtml(f,{readonly:true})).join('')}</div>` : `<div class="empty-state"><div class="ic">🗂</div>فایلی یافت نشد</div>`}`;
+  ${list.length? `<div class="grid">${list.map(f=>fileCardHtml(f,{readonly:true})).join('')}</div>` : `<div class="empty-state"><div class="ic">🗂</div>${view==='archive'?'آرشیوی موجود نیست':'فایلی یافت نشد'}</div>`}`;
 }
 function pageAdminOversightCustomers(){
   const dealType = UI.tab.adminCustDeal || 'rent';
