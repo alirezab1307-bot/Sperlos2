@@ -33,6 +33,7 @@ const PUBLIC_DIR = path.join(__dirname, 'public');
 const SESSIONS_KEY = '__sessions__';
 const ACCOUNTS_KEY = 'sl_accounts_v1';
 const OFFICE_CUSTOMERS_KEY = 'sl_office_customers_v1'; // فقط مدیر اجازه‌ی نوشتن دارد
+const OFFICE_FILES_KEY = 'sl_office_files_v1'; // فایل‌های دفتر — فقط مدیر اجازه‌ی نوشتن دارد
 
 /* ---------------------------------------------------------------
    لایه ذخیره‌سازی (Store) — یک رابط ساده get/set که پشت آن یا
@@ -328,7 +329,7 @@ const server = http.createServer(async (req, res) => {
     if (pathname === '/api/meta' && req.method === 'GET') {
       const arrayKeys = ['sl_files', 'sl_customers', 'sl_mosharekat_melk', 'sl_mosharekat_sazande_req',
         'sl_sazande_bank', 'sl_contracts_rent', 'sl_contracts_sale', 'sl_contracts_mosharekat',
-        'sl_contracts_other', 'sl_opportunities', 'sl_office_customers_v1'];
+        'sl_contracts_other', 'sl_opportunities', 'sl_office_customers_v1', 'sl_office_files_v1'];
       const out = {};
       for (const k of arrayKeys) {
         const list = await storeGet(k);
@@ -382,6 +383,7 @@ const server = http.createServer(async (req, res) => {
       const key = decodeURIComponent(pathname.slice('/api/storage/'.length));
       if (key === ACCOUNTS_KEY || key === SESSIONS_KEY) return sendJson(res, 403, { error: 'forbidden_key' });
       if (key === OFFICE_CUSTOMERS_KEY && authed.acc.role !== 'admin') return sendJson(res, 403, { error: 'forbidden' });
+      if (key === OFFICE_FILES_KEY && authed.acc.role !== 'admin') return sendJson(res, 403, { error: 'forbidden' });
       const { value } = await readBody(req);
       let parsed; try { parsed = JSON.parse(value); } catch (e) { parsed = value; }
       await storeSet(key, parsed);

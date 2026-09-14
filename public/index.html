@@ -261,6 +261,8 @@ button,input,select,textarea{font-family:'Vazirmatn',Tahoma,Arial,sans-serif;}
 }
 .tab-btn:hover{border-color:var(--gold-2);color:var(--ink);transform:translateY(-1px);}
 .tab-btn.active{background:var(--navy);color:#fff;border-color:var(--navy);box-shadow:var(--sh-sm);}
+.tab-count{display:inline-block;min-width:20px;padding:1px 6px;margin-inline-start:5px;border-radius:999px;background:rgba(21,34,56,.08);color:inherit;font-size:11px;font-weight:800;vertical-align:middle;transition:background .2s var(--ease);}
+.tab-btn.active .tab-count{background:rgba(255,255,255,.25);}
 .toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:16px;background:var(--paper-2);padding:12px;border-radius:14px;border:1px solid var(--line);transition:box-shadow .2s var(--ease), border-color .2s var(--ease);}
 .toolbar:focus-within{box-shadow:0 0 0 3px rgba(176,141,79,.12);border-color:var(--gold-2);}
 .toolbar input[type=text],.toolbar select,.toolbar input[type=number]{padding:9px 12px;border:1px solid var(--line);border-radius:9px;font-size:13px;background:var(--paper);transition:border-color .2s var(--ease), box-shadow .2s var(--ease);}
@@ -411,10 +413,10 @@ const STORAGE_KEYS = {
   files:'sl_files', customers:'sl_customers', mMelk:'sl_mosharekat_melk', mSaz:'sl_mosharekat_sazande_req',
   sazBank:'sl_sazande_bank', cRent:'sl_contracts_rent', cSale:'sl_contracts_sale', cMosh:'sl_contracts_mosharekat',
   cOther:'sl_contracts_other', settings:'sl_settings', agentBackup:'sl_agent_backup_meta', accounts:'sl_accounts_v1',
-  opportunities:'sl_opportunities', officeCustomers:'sl_office_customers_v1'
+  opportunities:'sl_opportunities', officeCustomers:'sl_office_customers_v1', officeFiles:'sl_office_files_v1'
 };
 
-let DB = { files:[], customers:[], mMelk:[], mSaz:[], sazBank:[], cRent:[], cSale:[], cMosh:[], cOther:[], settings:{ conversionRate:2.5, defaultFollowupDays:3 }, backupMeta:{}, accounts:[], opportunities:[], officeCustomers:[] };
+let DB = { files:[], customers:[], mMelk:[], mSaz:[], sazBank:[], cRent:[], cSale:[], cMosh:[], cOther:[], settings:{ conversionRate:2.5, defaultFollowupDays:3 }, backupMeta:{}, accounts:[], opportunities:[], officeCustomers:[], officeFiles:[] };
 let SESSION = null; // {role:'admin'|'agent', name:'...'}
 let SERVER_HEALTH = { ok:false, backend:'file' };
 let UI = { page:'dashboard', tab:{}, search:{}, sort:{}, priceMin:{}, priceMax:{}, filterAgent:'' , sidebarOpen:false, view:{}};
@@ -591,18 +593,19 @@ async function storageSet(key, value){
 }
 
 async function loadAll(){
-  const [files, customers, mMelk, mSaz, sazBank, cRent, cSale, cMosh, cOther, settings, backupMeta, opportunities, officeCustomers] = await Promise.all([
+  const [files, customers, mMelk, mSaz, sazBank, cRent, cSale, cMosh, cOther, settings, backupMeta, opportunities, officeCustomers, officeFiles] = await Promise.all([
     storageGet(STORAGE_KEYS.files), storageGet(STORAGE_KEYS.customers), storageGet(STORAGE_KEYS.mMelk),
     storageGet(STORAGE_KEYS.mSaz), storageGet(STORAGE_KEYS.sazBank), storageGet(STORAGE_KEYS.cRent),
     storageGet(STORAGE_KEYS.cSale), storageGet(STORAGE_KEYS.cMosh), storageGet(STORAGE_KEYS.cOther),
     storageGet(STORAGE_KEYS.settings), storageGet(STORAGE_KEYS.agentBackup),
-    storageGet(STORAGE_KEYS.opportunities), storageGet(STORAGE_KEYS.officeCustomers)
+    storageGet(STORAGE_KEYS.opportunities), storageGet(STORAGE_KEYS.officeCustomers), storageGet(STORAGE_KEYS.officeFiles)
   ]);
   DB.files=(files||[]).map(f=>{ if(!f.status) f.status='active'; return f; }); DB.customers=customers||[]; DB.mMelk=mMelk||[]; DB.mSaz=mSaz||[]; DB.sazBank=sazBank||[];
   DB.cRent=cRent||[]; DB.cSale=cSale||[]; DB.cMosh=cMosh||[]; DB.cOther=cOther||[];
   DB.settings=settings||{ conversionRate:2.5, defaultFollowupDays:3 };
   DB.backupMeta=backupMeta||{};
   DB.opportunities=opportunities||[]; DB.officeCustomers=officeCustomers||[];
+  DB.officeFiles=(officeFiles||[]).map(f=>{ if(!f.status) f.status='active'; return f; });
   // لیست حساب مشاوران فقط برای مدیر از API اختصاصی خوانده می‌شود
   if(SESSION && SESSION.role==='admin'){
     try{ const r = await apiFetch('/api/accounts'); DB.accounts = r.accounts||[]; }catch(e){ DB.accounts = DB.accounts||[]; }
@@ -614,7 +617,7 @@ async function saveCollection(name){
   const map={ files:STORAGE_KEYS.files, customers:STORAGE_KEYS.customers, mMelk:STORAGE_KEYS.mMelk, mSaz:STORAGE_KEYS.mSaz,
     sazBank:STORAGE_KEYS.sazBank, cRent:STORAGE_KEYS.cRent, cSale:STORAGE_KEYS.cSale, cMosh:STORAGE_KEYS.cMosh,
     cOther:STORAGE_KEYS.cOther, settings:STORAGE_KEYS.settings, backupMeta:STORAGE_KEYS.agentBackup,
-    opportunities:STORAGE_KEYS.opportunities, officeCustomers:STORAGE_KEYS.officeCustomers };
+    opportunities:STORAGE_KEYS.opportunities, officeCustomers:STORAGE_KEYS.officeCustomers, officeFiles:STORAGE_KEYS.officeFiles };
   await storageSet(map[name], DB[name]);
 }
 
@@ -650,24 +653,57 @@ const YESNO=['دارد','ندارد'];
 const USAGE_TYPES=['اداری','تجاری','اداری-تجاری','مطب/کلینیک','سایر'];
 const CONSTRUCTION_STAGES=['فونداسیون','اسکلت','سفت‌کاری','نازک‌کاری','نازک‌کاری پایانی','تحویل'];
 const BUILDING_LIKE=['apartment','office','presale']; // این‌ها ساختمانی/طبقاتی هستند، برخلاف ویلا
+const LAND_USAGE_TYPES=['دامداری','مرغداری','کشاورزی','طیور','سایر'];
+const WATER_ACCESS_OPTS=['چاه آب','چشمه/نهر','لوله کشاورزی','آب شرب شهری','ندارد'];
+const ROAD_ACCESS_OPTS=['آسفالت','شوسه','خاکی'];
+const LAND_DOCUMENT_OPTS=['دارد (تک‌برگ)','دارد (مادر/مشاعی)','قولنامه‌ای','کشاورزی/نسقی','ندارد'];
 
 function propTypeOptions(dealType){
-  const base=[['apartment','آپارتمان'],['villa','ویلایی'],['office','اداری']];
-  if(dealType==='sale') base.push(['presale','پیش‌فروش']);
+  const base=[['apartment','آپارتمان'],['villa','ویلایی'],['office','اداری/تجاری']];
+  if(dealType==='sale'){ base.push(['presale','پیش‌فروش']); base.push(['garden','باغ و زمین']); }
   return base;
 }
 function propTypeLabel(propType){
-  const map={apartment:'آپارتمان', villa:'ویلایی', office:'اداری', presale:'پیش‌فروش'};
+  const map={apartment:'آپارتمان', villa:'ویلایی', office:'اداری/تجاری', presale:'پیش‌فروش', garden:'باغ و زمین'};
   return map[propType]||propType;
 }
 
 function fileFields(dealType, propType){
-  // dealType: 'rent' | 'sale' , propType: 'apartment' | 'villa' | 'office' | 'presale'
+  // dealType: 'rent' | 'sale' , propType: 'apartment' | 'villa' | 'office' | 'presale' | 'garden'
   let f=[
     {key:'ownerName', label:'نام مالک', type:'text', required:true},
     {key:'ownerPhone', label:'شماره مالک', type:'tel', required:true},
     {key:'address', label:'آدرس', type:'textarea', required:true, span:'full'},
   ];
+  if(propType==='garden'){
+    f.push({key:'totalArea', label:'متراژ کل زمین (متر مربع)', type:'number', required:true});
+    f.push({key:'buildingArea', label:'متراژ بنای موجود (متر مربع - در صورت وجود)', type:'number'});
+    f.push({key:'__land_sep', label:'مشخصات زمین', type:'section'});
+    f.push({key:'landUsageType', label:'کاربری زمین', type:'select', options:LAND_USAGE_TYPES, required:true});
+    f.push({key:'landUsageOther', label:'توضیح کاربری (سایر)', type:'textarea', span:'full', showIf:d=>d.landUsageType==='سایر', required:true});
+    f.push({key:'documentStatus', label:'وضعیت سند', type:'select', options:LAND_DOCUMENT_OPTS});
+    f.push({key:'documentNotes', label:'توضیحات سند', type:'textarea', span:'full', showIf:d=>d.documentStatus==='ندارد'});
+    f.push({key:'waterAccess', label:'دسترسی به آب', type:'select', options:WATER_ACCESS_OPTS});
+    f.push({key:'electricityAccess', label:'دسترسی به برق', type:'select', options:YESNO});
+    f.push({key:'roadAccess', label:'نوع راه دسترسی', type:'select', options:ROAD_ACCESS_OPTS});
+    f.push({key:'fenceStatus', label:'حصارکشی/دیوارکشی', type:'select', options:YESNO});
+    f.push({key:'treeCount', label:'تعداد اصله درخت (در صورت وجود)', type:'number'});
+    f.push({key:'distanceToCity', label:'فاصله تا شهر/جاده اصلی (کیلومتر)', type:'number'});
+    f.push({key:'plaqueNumber', label:'شماره پلاک ثبتی', type:'text'});
+    f.push({key:'__price_sep', label:'اطلاعات قیمت', type:'section'});
+    if(dealType==='sale'){
+      f.push({key:'totalPrice', label:'قیمت کل (تومان)', type:'number', required:true, price:true});
+      f.push({key:'pricePerMeter', label:'قیمت هر متر (تومان)', type:'computed'});
+    } else {
+      f.push({key:'rahnPrice', label:'مبلغ رهن (تومان)', type:'number', required:true, price:true});
+      f.push({key:'ejarePrice', label:'اجاره ماهیانه (تومان)', type:'number', required:true, price:true});
+      f.push({key:'convertible', label:'قابلیت تبدیل رهن به اجاره', type:'checkbox'});
+      f.push({key:'convertAmount', label:'مبلغ رهن قابل تبدیل (تومان)', type:'number', showIf:d=>d.convertible, price:true});
+      f.push({key:'convertRate', label:'نرخ تبدیل (٪ ماهانه)', type:'number', showIf:d=>d.convertible});
+    }
+    f.push({key:'description', label:'توضیحات تکمیلی', type:'textarea', span:'full'});
+    return f;
+  }
   if(BUILDING_LIKE.includes(propType)){
     f.push({key:'area', label:'متراژ (متر مربع)', type:'number', required:true});
   } else {
@@ -787,6 +823,7 @@ function contractFields(kind){
       {key:'__c_sep', label:'کمیسیون', type:'section'},
       {key:'commissionTotal', label:'کمیسیون دریافتی کل (تومان)', type:'number', price:true},
       {key:'agentSharePercent', label:'سهم مشاور (٪)', type:'number'},
+      {key:'shiriniAbdarchi', label:'شیرینی آبدارچی (تومان)', type:'number', price:true},
       {key:'__renew_sep', label:'یادآوری تمدید', type:'section'},
       {key:'renewalAlarmDays', label:'چند روز قبل از پایان به مدیر آلارم داده شود؟ (پیش‌فرض ۳۰)', type:'number'},
       {key:'notes', label:'توضیحات', type:'textarea', span:'full'},
@@ -805,6 +842,7 @@ function contractFields(kind){
       {key:'__c_sep', label:'کمیسیون', type:'section'},
       {key:'commissionTotal', label:'کمیسیون دریافتی کل (تومان)', type:'number', price:true},
       {key:'agentSharePercent', label:'سهم مشاور (٪)', type:'number'},
+      {key:'shiriniAbdarchi', label:'شیرینی آبدارچی (تومان)', type:'number', price:true},
       {key:'notes', label:'توضیحات', type:'textarea', span:'full'},
     ];
   }
@@ -821,6 +859,7 @@ function contractFields(kind){
       {key:'__c_sep', label:'کمیسیون', type:'section'},
       {key:'commissionTotal', label:'کمیسیون دریافتی کل (تومان)', type:'number', price:true},
       {key:'agentSharePercent', label:'سهم مشاور (٪)', type:'number'},
+      {key:'shiriniAbdarchi', label:'شیرینی آبدارچی (تومان)', type:'number', price:true},
       {key:'notes', label:'توضیحات', type:'textarea', span:'full'},
     ];
   }
@@ -865,7 +904,7 @@ function recomputeForm(){
   const d = __formState;
   // قیمت هر متر
   if('pricePerMeter' in d || __formFields.some(f=>f.key==='pricePerMeter')){
-    const area = Number(d.area||d.buildingArea||0);
+    const area = Number(d.propType==='garden' ? (d.totalArea||d.buildingArea||0) : (d.area||d.buildingArea||0));
     const total = Number(d.totalPrice||0);
     d.pricePerMeter = area>0 ? Math.round(total/area) : 0;
   }
@@ -975,10 +1014,32 @@ function filePriceBoxHtml(item){
     ${extra}
   </div>`;
 }
-function fileCopyText(item){
+function fileCopyText(item, opts){
+  opts = opts||{};
+  const ownerLine = opts.maskOwnerAgent
+    ? `👤 مشاور مربوطه: ${opts.maskOwnerAgent} — جهت هماهنگی با مالک، با ایشان تماس بگیرید`
+    : `☎️ تماس با مالک: ${item.ownerPhone||'-'}`;
   const lines=[];
   lines.push(`🏷 فایل ${item.dealType==='sale'?'فروش':'رهن و اجاره'} — ${propTypeLabel(item.propType)}`);
   lines.push(`📍 آدرس: ${item.address||'-'}`);
+  if(item.propType==='garden'){
+    lines.push(`📐 متراژ کل زمین: ${toFa(item.totalArea)} متر${item.buildingArea?` — بنای موجود: ${toFa(item.buildingArea)} متر`:''}`);
+    lines.push(`🌱 کاربری زمین: ${item.landUsageType==='سایر'?(item.landUsageOther||'سایر'):(item.landUsageType||'-')}`);
+    lines.push(`💧 آب: ${item.waterAccess||'-'} | ⚡ برق: ${item.electricityAccess||'-'} | 🛣 راه دسترسی: ${item.roadAccess||'-'}`);
+    lines.push(`🧱 حصارکشی: ${item.fenceStatus||'-'}${item.treeCount?` | 🌳 تعداد درخت: ${toFa(item.treeCount)}`:''}${item.distanceToCity?` | 📏 فاصله تا شهر: ${toFa(item.distanceToCity)} کیلومتر`:''}`);
+    if(item.plaqueNumber) lines.push(`🔖 پلاک ثبتی: ${item.plaqueNumber}`);
+    if(item.documentStatus) lines.push(`📄 سند: ${item.documentStatus}${item.documentNotes?' — '+item.documentNotes:''}`);
+    if(item.dealType==='sale'){
+      lines.push(`💰 قیمت کل: ${toFa(item.totalPrice)} تومان (هر متر: ${toFa(item.pricePerMeter)} تومان)`);
+      lines.push(`(${numberToWordsFa(item.totalPrice)})`);
+    } else {
+      lines.push(`💰 رهن: ${toFa(item.rahnPrice)} تومان — اجاره: ${toFa(item.ejarePrice)} تومان/ماه`);
+    }
+    if(item.description) lines.push(`📝 توضیحات: ${item.description}`);
+    lines.push(ownerLine);
+    lines.push(`— دفتر املاک اسپرلوس —`);
+    return lines.join('\n');
+  }
   if(BUILDING_LIKE.includes(item.propType)){
     lines.push(`📐 متراژ: ${toFa(item.area)} متر`);
     lines.push(`🏢 طبقه: ${item.floor||'-'} از ${item.totalFloors||'-'} — واحد در طبقه: ${item.unitsPerFloor||'-'}`);
@@ -1001,7 +1062,7 @@ function fileCopyText(item){
     if(item.paymentSchedule) lines.push(`💳 رویه پرداخت: ${item.paymentSchedule}`);
   }
   if(item.description) lines.push(`📝 توضیحات: ${item.description}`);
-  lines.push(`☎️ تماس با مالک: ${item.ownerPhone||'-'}`);
+  lines.push(ownerLine);
   lines.push(`— دفتر املاک اسپرلوس —`);
   return lines.join('\n');
 }
@@ -1041,6 +1102,7 @@ function contractCopyText(item, kind){
   if(kind==='mosharekat') lines.push(`مالک: ${item.ownerName||'-'}`, `سازنده: ${item.builderName||'-'}`, `تاریخ: ${faDate(item.contractDate)}`);
   if(kind==='other') lines.push(`بنگاه: ${item.agencyName||'-'}`, `مالک: ${item.ownerName||'-'}`, `طرف مقابل: ${item.tenantOrBuyerName||'-'}`);
   lines.push(`کمیسیون کل: ${toFa(item.commissionTotal)} تومان — سهم مشاور: ${item.agentSharePercent||0}٪`);
+  if(item.shiriniAbdarchi) lines.push(`شیرینی آبدارچی: ${toFa(item.shiriniAbdarchi)} تومان`);
   lines.push(`مشاور: ${item.agentName||'-'}`);
   lines.push(`— دفتر املاک اسپرلوس —`);
   return lines.join('\n');
@@ -1050,30 +1112,53 @@ function contractCopyText(item, kind){
    ========================================================================= */
 function fileCardHtml(item, opts){
   opts=opts||{};
+  const kind = opts.kind || 'file'; // 'file' | 'office'
+  const editFn = kind==='office' ? 'editOfficeFile' : 'editFile';
+  const deleteFn = kind==='office' ? 'deleteOfficeFile' : 'deleteFile';
+  const statusFn = kind==='office' ? 'setOfficeFileStatus' : 'setFileStatus';
   const kv=[];
-  if(BUILDING_LIKE.includes(item.propType)){
+  if(item.propType==='garden'){
+    kv.push(['متراژ کل زمین', toFa(item.totalArea)+' متر']);
+    kv.push(['بنای موجود', item.buildingArea? toFa(item.buildingArea)+' متر' : 'ندارد']);
+    kv.push(['کاربری زمین', item.landUsageType==='سایر'? (item.landUsageOther||'سایر') : (item.landUsageType||'-')]);
+    kv.push(['دسترسی آب', item.waterAccess||'-']);
+    kv.push(['دسترسی برق', item.electricityAccess||'-']);
+    kv.push(['راه دسترسی', item.roadAccess||'-']);
+    kv.push(['حصارکشی', item.fenceStatus||'-']);
+    if(item.treeCount) kv.push(['تعداد درخت', toFa(item.treeCount)]);
+    if(item.distanceToCity) kv.push(['فاصله تا شهر', toFa(item.distanceToCity)+' کیلومتر']);
+    if(item.plaqueNumber) kv.push(['پلاک ثبتی', item.plaqueNumber]);
+    if(item.documentStatus) kv.push(['وضعیت سند', item.documentStatus]);
+  } else if(BUILDING_LIKE.includes(item.propType)){
     kv.push(['متراژ', toFa(item.area)+' متر']);
     kv.push(['طبقه', (item.floor||'-')+' از '+(item.totalFloors||'-')]);
     kv.push(['آسانسور', item.elevator||'-']);
     kv.push(['واحد در طبقه', item.unitsPerFloor||'-']);
     if(item.propType==='office') kv.push(['کاربری', item.usageType||'-']);
+    kv.push(['خواب', item.bedrooms||'-']);
+    kv.push(['جهت نور', item.direction||'-']);
+    kv.push(['پارکینگ', item.parking||'-']);
+    kv.push(['بالکن', item.balcony||'-']);
+    kv.push(['انباری', item.storage||'-']);
+    kv.push(['سال ساخت', item.yearBuilt||'-']);
+    if(item.dealType==='sale' && item.documentStatus) kv.push(['وضعیت سند', item.documentStatus]);
   } else {
     kv.push(['متراژ کل', toFa(item.totalArea)+' متر']);
     kv.push(['زیربنا', toFa(item.buildingArea)+' متر']);
+    kv.push(['خواب', item.bedrooms||'-']);
+    kv.push(['جهت نور', item.direction||'-']);
+    kv.push(['پارکینگ', item.parking||'-']);
+    kv.push(['بالکن', item.balcony||'-']);
+    kv.push(['انباری', item.storage||'-']);
+    kv.push(['سال ساخت', item.yearBuilt||'-']);
+    if(item.dealType==='sale' && item.documentStatus) kv.push(['وضعیت سند', item.documentStatus]);
   }
-  kv.push(['خواب', item.bedrooms||'-']);
-  kv.push(['جهت نور', item.direction||'-']);
-  kv.push(['پارکینگ', item.parking||'-']);
-  kv.push(['بالکن', item.balcony||'-']);
-  kv.push(['انباری', item.storage||'-']);
-  kv.push(['سال ساخت', item.yearBuilt||'-']);
-  if(item.dealType==='sale' && item.documentStatus) kv.push(['وضعیت سند', item.documentStatus]);
   const kvHtml = kv.map(([k,v])=>`<div><span class="k">${k}</span><span class="v">${esc(v)}</span></div>`).join('');
   const presaleHtml = item.propType==='presale' ? `<div class="desc-box">
       🏗 مرحله ساخت: ${esc(item.constructionStage||'-')} | زمان تحویل: ${esc(item.deliveryTime||'-')}
       ${item.paymentSchedule?`<br>💳 رویه پرداخت: ${esc(item.paymentSchedule)}`:''}
     </div>` : '';
-  const docNotesHtml = (item.dealType==='sale' && item.documentStatus==='ندارد' && item.documentNotes) ? `<div class="desc-box">📄 توضیحات سند: ${esc(item.documentNotes)}</div>` : '';
+  const docNotesHtml = ((item.dealType==='sale' || item.propType==='garden') && item.documentStatus==='ندارد' && item.documentNotes) ? `<div class="desc-box">📄 توضیحات سند: ${esc(item.documentNotes)}</div>` : '';
   const stMeta = fileStatusMeta(item);
   return `
   <div class="card" data-id="${item.id}">
@@ -1093,13 +1178,13 @@ function fileCardHtml(item, opts){
     ${presaleHtml}
     ${docNotesHtml}
     ${item.description?`<div class="desc-box">📝 ${esc(item.description)}</div>`:''}
-    <div class="meta-line"><span>مشاور: ${esc(item.agentName||'-')}</span><span>ثبت: ${faDate(item.createdAt)}</span><span>آخرین ویرایش: ${faDate(item.updatedAt)}</span></div>
+    <div class="meta-line"><span>${kind==='office'?'ثبت‌کننده':'مشاور'}: ${esc(item.agentName||'-')}</span><span>ثبت: ${faDate(item.createdAt)}</span><span>آخرین ویرایش: ${faDate(item.updatedAt)}</span></div>
     <div class="card-actions">
-      <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--muted)">وضعیت:
-        <select onchange="setFileStatus('${item.id}', this.value)" style="padding:6px 8px;border-radius:8px;border:1px solid var(--line);background:var(--paper);font-size:12.5px">${fileStatusOptionsHtml(item)}</select>
-      </label>
-      ${opts.readonly? '' : `<button class="btn btn-outline btn-sm" onclick="editFile('${item.id}')">✏️ ویرایش</button>
-      <button class="btn btn-danger btn-sm" onclick="deleteFile('${item.id}')">🗑 حذف</button>`}
+      ${(opts.readonly && kind==='office') ? '' : `<label style="display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--muted)">وضعیت:
+        <select onchange="${statusFn}('${item.id}', this.value)" style="padding:6px 8px;border-radius:8px;border:1px solid var(--line);background:var(--paper);font-size:12.5px">${fileStatusOptionsHtml(item)}</select>
+      </label>`}
+      ${opts.readonly? '' : `<button class="btn btn-outline btn-sm" onclick="${editFn}('${item.id}')">✏️ ویرایش</button>
+      ${kind==='office'? `<button class="btn btn-danger btn-sm" onclick="${deleteFn}('${item.id}')">🗑 حذف</button>` : ''}`}
       <button class="btn btn-gold btn-sm" onclick='copyText(${JSON.stringify(fileCopyText(item))})'>📋 کپی مشخصات</button>
     </div>
   </div>`;
@@ -1190,12 +1275,12 @@ function applySearchSortFilter(list, scopeKey, searchFields, priceFn){
    ========================================================================= */
 function addFile(dealType, propType){
   openFormModal('فایل جدید — '+(dealType==='sale'?'فروش':'رهن و اجاره')+' / '+propTypeLabel(propType),
-    fileFields(dealType, propType), {}, async (data)=>{
+    fileFields(dealType, propType), {propType}, async (data)=>{
       data.id=uid(); data.dealType=dealType; data.propType=propType; data.agentName=SESSION.name;
       data.status = 'active';
       data.createdAt=nowIso(); data.updatedAt=nowIso();
       if(dealType==='sale'){
-        const area = Number(data.area||data.buildingArea||0);
+        const area = Number(propType==='garden' ? (data.totalArea||data.buildingArea||0) : (data.area||data.buildingArea||0));
         data.pricePerMeter = area>0? Math.round(Number(data.totalPrice||0)/area):0;
       }
       DB.files.push(data); await saveCollection('files'); toast('فایل ذخیره شد ✓'); renderApp();
@@ -1205,7 +1290,7 @@ function editFile(id){
   const item = DB.files.find(f=>f.id===id); if(!item) return;
   openFormModal('ویرایش فایل', fileFields(item.dealType, item.propType), item, async (data)=>{
     if(item.dealType==='sale'){
-      const area = Number(data.area||data.buildingArea||0);
+      const area = Number(item.propType==='garden' ? (data.totalArea||data.buildingArea||0) : (data.area||data.buildingArea||0));
       data.pricePerMeter = area>0? Math.round(Number(data.totalPrice||0)/area):0;
     }
     Object.assign(item, data); item.updatedAt=nowIso();
@@ -1370,10 +1455,10 @@ async function deleteContract(kind, id){
 /* =========================================================================
    تطبیق فایل (matching) — حداقل ۸۰٪ شباهت قیمت
    ========================================================================= */
-function computeMatches(dealCategory){ // 'sale-buy' or 'rent'
+function computeMatchesGeneric(dealCategory, customersList, filesList){ // 'sale-buy' or 'rent'
   const results = []; // [{customer, matches:[{file, score}]}]
-  const customers = DB.customers.filter(c=> (dealCategory==='rent'? c.dealType==='rent' : c.dealType==='buy'));
-  const files = DB.files.filter(f=> !isArchivedFile(f) && (dealCategory==='rent'? f.dealType==='rent' : f.dealType==='sale'));
+  const customers = customersList.filter(c=> (dealCategory==='rent'? c.dealType==='rent' : c.dealType==='buy'));
+  const files = filesList.filter(f=> !isArchivedFile(f) && (dealCategory==='rent'? f.dealType==='rent' : f.dealType==='sale'));
   customers.forEach(cust=>{
     const matches=[];
     files.filter(f=>f.propType===cust.propType).forEach(file=>{
@@ -1396,6 +1481,18 @@ function computeMatches(dealCategory){ // 'sale-buy' or 'rent'
     }
   });
   return results;
+}
+// مطابقت مشتریان مشاوران با فایل‌های مشاوران (همه‌ی مشاوران، صرف‌نظر از مالک فایل)
+function computeMatches(dealCategory){
+  return computeMatchesGeneric(dealCategory, DB.customers, DB.files);
+}
+// مطابقت مشتریان مشاوران با «فایل‌های دفتر» (بانک فایل مدیر)
+function computeOfficeFileMatches(dealCategory){
+  return computeMatchesGeneric(dealCategory, DB.customers, DB.officeFiles);
+}
+// مطابقت «مشتریان دفتر» (بانک مشتری مدیر) با فایل‌های مشاوران
+function computeOfficeCustomerMatches(dealCategory){
+  return computeMatchesGeneric(dealCategory, DB.officeCustomers, DB.files);
 }
 /* =========================================================================
    بک‌آپ گیری (هر ۲۴ ساعت)
@@ -1496,7 +1593,10 @@ function pageAgentFiles(dealType){
   let list = DB.files.filter(f=>f.agentName===SESSION.name && f.dealType===dealType && f.propType===propType);
   list = list.filter(f=> view==='archive' ? isArchivedFile(f) : !isArchivedFile(f));
   list = applySearchSortFilter(list, scopeKey, ['ownerName','address','area','totalArea','buildingArea'], fileMainPrice);
-  const tabsHtml = opts.map(([k,label])=>`<button class="tab-btn ${propType===k?'active':''}" onclick="UI.tab['${scopeKeyBase}']='${k}';renderApp();">${label}</button>`).join('');
+  const tabsHtml = opts.map(([k,label])=>{
+    const cnt = DB.files.filter(f=>f.agentName===SESSION.name && f.dealType===dealType && f.propType===k && (view==='archive'? isArchivedFile(f): !isArchivedFile(f))).length;
+    return `<button class="tab-btn ${propType===k?'active':''}" onclick="UI.tab['${scopeKeyBase}']='${k}';renderApp();">${label} <span class="tab-count">${cnt}</span></button>`;
+  }).join('');
   return `
   <div class="tabs">
     ${tabsHtml}
@@ -1526,7 +1626,10 @@ function pageAgentCustomers(dealType){
   let list = DB.customers.filter(c=>c.agentName===SESSION.name && c.dealType===dealType && c.propType===propType);
   const priceFn = dealType==='buy'? (c=>Number(c.budgetMax||c.budgetMin||0)) : (c=>Number(c.budgetRahn||0));
   list = applySearchSortFilter(list, scopeKey, ['name','phone'], priceFn);
-  const tabsHtml = opts.map(([k,label])=>`<button class="tab-btn ${propType===k?'active':''}" onclick="UI.tab['${scopeKeyBase}']='${k}';renderApp();">${label}</button>`).join('');
+  const tabsHtml = opts.map(([k,label])=>{
+    const cnt = DB.customers.filter(c=>c.agentName===SESSION.name && c.dealType===dealType && c.propType===k).length;
+    return `<button class="tab-btn ${propType===k?'active':''}" onclick="UI.tab['${scopeKeyBase}']='${k}';renderApp();">${label} <span class="tab-count">${cnt}</span></button>`;
+  }).join('');
   return `
   <div class="tabs">
     ${tabsHtml}
@@ -1540,38 +1643,98 @@ function pageAgentCustomers(dealType){
 /* =========================================================================
    صفحه تطبیق فایل
    ========================================================================= */
+// کارت یک فایل درون نتیجه‌ی تطبیق. اگر فایل مربوط به مشاور دیگری باشد (maskAgent)،
+// به‌جای شماره تماس مالک، فقط نام مشاور مربوطه نشان داده می‌شود.
+function matchFileCardHtml(file, opts){
+  opts = opts||{};
+  return `
+  <div style="border:1px solid var(--line);border-radius:12px;padding:10px;background:var(--paper)">
+    <div style="font-weight:800;color:var(--ink);font-size:13px;margin-bottom:4px">${esc(file.address||'-')}</div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:6px">شباهت قیمت: <b style="color:var(--emerald)">${Math.round(opts.score*100)}٪</b></div>
+    ${filePriceBoxHtml(file)}
+    ${opts.showAgentMeta? `<div class="meta-line" style="margin:2px 0 4px"><span>مشاور فایل: ${esc(file.agentName||'-')}</span></div>`:''}
+    <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;align-items:center">
+      ${opts.maskAgent
+        ? `<div class="hint" style="font-size:12px;margin:0">🔒 این فایل مربوط به مشاور <b>${esc(file.agentName||'-')}</b> است — برای هماهنگی با مالک، با ایشان تماس بگیرید.</div>
+           <button class="btn btn-gold btn-sm" onclick='copyText(${JSON.stringify(fileCopyText(file,{maskOwnerAgent:file.agentName||"-"}))})'>📋 کپی مشخصات</button>`
+        : `<a class="btn btn-outline btn-sm" href="tel:${esc(file.ownerPhone)}">☎ تماس با مالک</a>
+           <button class="btn btn-gold btn-sm" onclick='copyText(${JSON.stringify(fileCopyText(file))})'>📋 کپی</button>`}
+    </div>
+  </div>`;
+}
+// کارت یک گروه تطبیق (یک مشتری + فایل‌های مرتبط با آن).
+// kind: 'std' (مشتری مشاوران × فایل مشاوران) | 'officeFiles' (مشتری مشاوران × فایل دفتر) | 'officeCustomers' (مشتری دفتر × فایل مشاوران)
+// وقتی تعداد فایل‌های مرتبط زیاد شود، فایل‌های اضافی داخل یک کشوی تاشو (details/summary) قرار می‌گیرند تا صفحه شلوغ نشود.
+function matchGroupHtml(group, kind){
+  const isAdmin = SESSION.role==='admin';
+  const cust = group.customer;
+  const custIsOffice = kind==='officeCustomers';
+  const filesAreOffice = kind==='officeFiles';
+  const VISIBLE_COUNT = 3;
+  const renderOne = (m)=>{
+    const maskAgent = kind==='std' && !isAdmin && m.file.agentName && m.file.agentName!==SESSION.name;
+    return matchFileCardHtml(m.file, {score:m.score, maskAgent, showAgentMeta: isAdmin && !filesAreOffice});
+  };
+  const visible = group.matches.slice(0, VISIBLE_COUNT);
+  const rest = group.matches.slice(VISIBLE_COUNT);
+  const custTitle = custIsOffice
+    ? `${esc(cust.name)} <span style="font-size:11px;color:var(--muted);font-weight:500">(مشتری دفتر)</span>`
+    : esc(cust.name);
+  return `
+  <div class="card" style="margin-bottom:14px">
+    <div class="card-top">
+      <div>
+        <div class="card-title">👤 ${custTitle} <span style="color:var(--muted);font-weight:500;font-size:12px">(${propTypeLabel(cust.propType)})</span></div>
+        <a class="phone-link" href="tel:${esc(cust.phone)}">☎ ${esc(cust.phone)}</a>
+        ${isAdmin && !custIsOffice? `<div class="meta-line"><span>مشاور مشتری: ${esc(cust.agentName||'-')}</span></div>`:''}
+      </div>
+      <span class="badge badge-navy">${toFa(group.matches.length)} فایل مرتبط</span>
+    </div>
+    ${filesAreOffice? `<div class="hint" style="font-size:12px;margin:6px 0 0">📁 فایل(های) دفتر با این مشتری مطابقت دارد</div>`:''}
+    ${custIsOffice? `<div class="hint" style="font-size:12px;margin:6px 0 0">🏢 این مشتری دفتر با فایل(های) شما مطابقت دارد</div>`:''}
+    <div class="grid" style="margin-top:8px">${visible.map(renderOne).join('')}</div>
+    ${rest.length? `<details style="margin-top:8px">
+       <summary style="cursor:pointer;color:var(--gold);font-weight:700;font-size:13px;padding:6px 0;list-style:none">▾ نمایش ${toFa(rest.length)} فایل مشابه دیگر</summary>
+       <div class="grid" style="margin-top:8px">${rest.map(renderOne).join('')}</div>
+     </details>` : ''}
+  </div>`;
+}
 function pageMatching(){
   const cat = UI.tab.matching || 'rent';
   UI.tab.matching = cat;
-  const results = computeMatches(cat).filter(r=> r.customer.agentName===SESSION.name || SESSION.role==='admin');
+  const isAdmin = SESSION.role==='admin';
+
+  // ۱) مطابقت مشتری هر مشاور با فایل‌های همه‌ی مشاوران (برای مدیر: همه؛ برای مشاور: فقط مشتری‌های خودش)
+  const stdRent = computeMatches('rent').filter(r=> r.customer.agentName===SESSION.name || isAdmin);
+  const stdSale = computeMatches('sale').filter(r=> r.customer.agentName===SESSION.name || isAdmin);
+
+  // ۲) مطابقت مشتری‌های مشاوران با «فایل‌های دفتر» (برای مدیر: همه؛ برای مشاور: فقط مشتری‌های خودش)
+  const officeFileRent = computeOfficeFileMatches('rent').filter(r=> r.customer.agentName===SESSION.name || isAdmin);
+  const officeFileSale = computeOfficeFileMatches('sale').filter(r=> r.customer.agentName===SESSION.name || isAdmin);
+
+  // ۳) مطابقت «مشتریان دفتر» با فایل‌های مشاوران (برای مدیر: همه؛ برای مشاور: فقط فایل‌های خودش)
+  const filterOfficeCustResults = (raw)=> isAdmin ? raw :
+    raw.map(r=>({customer:r.customer, matches:r.matches.filter(m=>m.file.agentName===SESSION.name)})).filter(r=>r.matches.length);
+  const officeCustRent = filterOfficeCustResults(computeOfficeCustomerMatches('rent'));
+  const officeCustSale = filterOfficeCustResults(computeOfficeCustomerMatches('sale'));
+
+  const countRent = stdRent.length + officeFileRent.length + officeCustRent.length;
+  const countSale = stdSale.length + officeFileSale.length + officeCustSale.length;
+
+  const std = cat==='rent'? stdRent : stdSale;
+  const officeFileResults = cat==='rent'? officeFileRent : officeFileSale;
+  const officeCustResults = cat==='rent'? officeCustRent : officeCustSale;
+  const total = std.length + officeFileResults.length + officeCustResults.length;
+
   return `
   <div class="tabs">
-    <button class="tab-btn ${cat==='rent'?'active':''}" onclick="UI.tab.matching='rent';renderApp();">رهن و اجاره</button>
-    <button class="tab-btn ${cat==='sale'?'active':''}" onclick="UI.tab.matching='sale';renderApp();">خرید و فروش</button>
+    <button class="tab-btn ${cat==='rent'?'active':''}" onclick="UI.tab.matching='rent';renderApp();">رهن و اجاره <span class="tab-count">${toFa(countRent)}</span></button>
+    <button class="tab-btn ${cat==='sale'?'active':''}" onclick="UI.tab.matching='sale';renderApp();">خرید و فروش <span class="tab-count">${toFa(countSale)}</span></button>
   </div>
-  ${results.length===0? `<div class="empty-state"><div class="ic">🔍</div>در حال حاضر تطبیقی با شباهت قیمت حداقل ۸۰٪ یافت نشد</div>` :
-  results.map(r=>`
-    <div class="card" style="margin-bottom:14px">
-      <div class="card-top">
-        <div>
-          <div class="card-title">👤 ${esc(r.customer.name)} <span style="color:var(--muted);font-weight:500;font-size:12px">(${propTypeLabel(r.customer.propType)})</span></div>
-          <a class="phone-link" href="tel:${esc(r.customer.phone)}">☎ ${esc(r.customer.phone)}</a>
-        </div>
-        <span class="badge badge-navy">${r.matches.length} فایل مرتبط</span>
-      </div>
-      <div class="grid">
-        ${r.matches.map(m=>`
-          <div style="border:1px solid var(--line);border-radius:12px;padding:10px;background:var(--paper)">
-            <div style="font-weight:800;color:var(--ink);font-size:13px;margin-bottom:4px">${esc(m.file.address||'-')}</div>
-            <div style="font-size:12px;color:var(--muted);margin-bottom:6px">شباهت قیمت: <b style="color:var(--emerald)">${Math.round(m.score*100)}٪</b></div>
-            ${filePriceBoxHtml(m.file)}
-            <div style="display:flex;gap:6px;margin-top:6px">
-              <a class="btn btn-outline btn-sm" href="tel:${esc(m.file.ownerPhone)}">☎ تماس با مالک</a>
-              <button class="btn btn-gold btn-sm" onclick='copyText(${JSON.stringify(fileCopyText(m.file))})'>📋 کپی</button>
-            </div>
-          </div>`).join('')}
-      </div>
-    </div>`).join('')}
+  ${total===0? `<div class="empty-state"><div class="ic">🔍</div>در حال حاضر تطبیقی با شباهت قیمت حداقل ۸۰٪ یافت نشد</div>` : ''}
+  ${std.length? `<div class="section-title">🔍 مطابقت مشتریان با فایل‌ها</div>${std.map(r=>matchGroupHtml(r,'std')).join('')}` : ''}
+  ${officeFileResults.length? `<div class="section-title">🏢 مطابقت مشتریان با فایل‌های دفتر</div>${officeFileResults.map(r=>matchGroupHtml(r,'officeFiles')).join('')}` : ''}
+  ${officeCustResults.length? `<div class="section-title">🏢 مطابقت مشتریان دفتر با فایل‌های شما</div>${officeCustResults.map(r=>matchGroupHtml(r,'officeCustomers')).join('')}` : ''}
   `;
 }
 
@@ -1636,16 +1799,25 @@ function opportunityCardHtml(item, opts){
   opts = opts||{};
   const overdue = item.nextFollowupDate && new Date(item.nextFollowupDate) <= new Date();
   const kv=[];
-  if(BUILDING_LIKE.includes(item.propType)){
+  if(item.propType==='garden'){
+    kv.push(['متراژ کل زمین', toFa(item.totalArea)+' متر']);
+    kv.push(['بنای موجود', item.buildingArea? toFa(item.buildingArea)+' متر' : 'ندارد']);
+    kv.push(['کاربری زمین', item.landUsageType==='سایر'? (item.landUsageOther||'سایر') : (item.landUsageType||'-')]);
+    kv.push(['دسترسی آب', item.waterAccess||'-']);
+    kv.push(['راه دسترسی', item.roadAccess||'-']);
+  } else if(BUILDING_LIKE.includes(item.propType)){
     kv.push(['متراژ', toFa(item.area)+' متر']);
     kv.push(['طبقه', (item.floor||'-')+' از '+(item.totalFloors||'-')]);
+    kv.push(['خواب', item.bedrooms||'-']);
+    kv.push(['جهت نور', item.direction||'-']);
+    kv.push(['پارکینگ', item.parking||'-']);
   } else {
     kv.push(['متراژ کل', toFa(item.totalArea)+' متر']);
     kv.push(['زیربنا', toFa(item.buildingArea)+' متر']);
+    kv.push(['خواب', item.bedrooms||'-']);
+    kv.push(['جهت نور', item.direction||'-']);
+    kv.push(['پارکینگ', item.parking||'-']);
   }
-  kv.push(['خواب', item.bedrooms||'-']);
-  kv.push(['جهت نور', item.direction||'-']);
-  kv.push(['پارکینگ', item.parking||'-']);
   const kvHtml = kv.map(([k,v])=>`<div><span class="k">${k}</span><span class="v">${esc(v)}</span></div>`).join('');
   return `
   <div class="card" data-id="${item.id}">
@@ -1674,11 +1846,11 @@ function opportunityCardHtml(item, opts){
 }
 function addOpportunity(dealType, propType){
   openFormModal('فرصت آینده جدید — '+(dealType==='sale'?'فروش':'رهن و اجاره')+' / '+propTypeLabel(propType),
-    opportunityFields(dealType, propType), {nextFollowupDate: new Date(Date.now()+3*86400000).toISOString().slice(0,10)}, async (data)=>{
+    opportunityFields(dealType, propType), {propType, nextFollowupDate: new Date(Date.now()+3*86400000).toISOString().slice(0,10)}, async (data)=>{
       data.id=uid(); data.dealType=dealType; data.propType=propType; data.agentName=SESSION.name;
       data.createdAt=nowIso(); data.updatedAt=nowIso();
       if(dealType==='sale'){
-        const area = Number(data.area||data.buildingArea||0);
+        const area = Number(propType==='garden' ? (data.totalArea||data.buildingArea||0) : (data.area||data.buildingArea||0));
         data.pricePerMeter = area>0? Math.round(Number(data.totalPrice||0)/area):0;
       }
       DB.opportunities.push(data); await saveCollection('opportunities'); toast('فرصت ذخیره شد ✓'); renderApp();
@@ -1688,7 +1860,7 @@ function editOpportunity(id){
   const item = DB.opportunities.find(x=>x.id===id); if(!item) return;
   openFormModal('ویرایش فرصت آینده', opportunityFields(item.dealType, item.propType), item, async (data)=>{
     if(item.dealType==='sale'){
-      const area = Number(data.area||data.buildingArea||0);
+      const area = Number(item.propType==='garden' ? (data.totalArea||data.buildingArea||0) : (data.area||data.buildingArea||0));
       data.pricePerMeter = area>0? Math.round(Number(data.totalPrice||0)/area):0;
     }
     Object.assign(item, data); item.updatedAt=nowIso();
@@ -1714,13 +1886,19 @@ function pageOpportunities(){
   const scopeKey = 'opp_'+dealType+'_'+propType;
   const readonly = SESSION.role==='admin';
   let list = readonly ? DB.opportunities.slice() : DB.opportunities.filter(x=>x.agentName===SESSION.name);
+  const baseList = list;
   list = list.filter(x=>x.dealType===dealType && x.propType===propType);
   list = applySearchSortFilter(list, scopeKey, ['ownerName','address'], fileMainPrice);
-  const tabsHtml = opts.map(([k,label])=>`<button class="tab-btn ${propType===k?'active':''}" onclick="UI.tab.oppProp='${k}';renderApp();">${label}</button>`).join('');
+  const cntSale = baseList.filter(x=>x.dealType==='sale').length;
+  const cntRent = baseList.filter(x=>x.dealType==='rent').length;
+  const tabsHtml = opts.map(([k,label])=>{
+    const cnt = baseList.filter(x=>x.dealType===dealType && x.propType===k).length;
+    return `<button class="tab-btn ${propType===k?'active':''}" onclick="UI.tab.oppProp='${k}';renderApp();">${label} <span class="tab-count">${cnt}</span></button>`;
+  }).join('');
   return `
   <div class="tabs">
-    <button class="tab-btn ${dealType==='sale'?'active':''}" onclick="UI.tab.oppDeal='sale';renderApp();">فروش</button>
-    <button class="tab-btn ${dealType==='rent'?'active':''}" onclick="UI.tab.oppDeal='rent';renderApp();">رهن و اجاره</button>
+    <button class="tab-btn ${dealType==='sale'?'active':''}" onclick="UI.tab.oppDeal='sale';renderApp();">فروش <span class="tab-count">${cntSale}</span></button>
+    <button class="tab-btn ${dealType==='rent'?'active':''}" onclick="UI.tab.oppDeal='rent';renderApp();">رهن و اجاره <span class="tab-count">${cntRent}</span></button>
     ${tabsHtml}
     <div style="flex:1"></div>
     ${readonly? '' : `<button class="btn btn-primary btn-sm" onclick="addOpportunity('${dealType}','${propType}')">+ فرصت جدید</button>`}
@@ -1763,11 +1941,16 @@ function pageOfficeCustomers(){
   let list = DB.officeCustomers.filter(c=>c.dealType===dealType && c.propType===propType);
   const priceFn = dealType==='buy'? (c=>Number(c.budgetMax||0)) : (c=>Number(c.budgetRahn||0));
   list = applySearchSortFilter(list, scopeKey, ['name','phone'], priceFn);
-  const tabsHtml = opts.map(([k,label])=>`<button class="tab-btn ${propType===k?'active':''}" onclick="UI.tab.ocProp='${k}';renderApp();">${label}</button>`).join('');
+  const cntRent = DB.officeCustomers.filter(c=>c.dealType==='rent').length;
+  const cntBuy = DB.officeCustomers.filter(c=>c.dealType==='buy').length;
+  const tabsHtml = opts.map(([k,label])=>{
+    const cnt = DB.officeCustomers.filter(c=>c.dealType===dealType && c.propType===k).length;
+    return `<button class="tab-btn ${propType===k?'active':''}" onclick="UI.tab.ocProp='${k}';renderApp();">${label} <span class="tab-count">${cnt}</span></button>`;
+  }).join('');
   return `
   <div class="tabs">
-    <button class="tab-btn ${dealType==='rent'?'active':''}" onclick="UI.tab.ocDeal='rent';renderApp();">رهن و اجاره</button>
-    <button class="tab-btn ${dealType==='buy'?'active':''}" onclick="UI.tab.ocDeal='buy';renderApp();">خرید</button>
+    <button class="tab-btn ${dealType==='rent'?'active':''}" onclick="UI.tab.ocDeal='rent';renderApp();">رهن و اجاره <span class="tab-count">${cntRent}</span></button>
+    <button class="tab-btn ${dealType==='buy'?'active':''}" onclick="UI.tab.ocDeal='buy';renderApp();">خرید <span class="tab-count">${cntBuy}</span></button>
     ${tabsHtml}
     <div style="flex:1"></div>
     ${isAdmin? `<button class="btn btn-primary btn-sm" onclick="addOfficeCustomer('${dealType}','${propType}')">+ مشتری دفتر جدید</button>` : ''}
@@ -1775,6 +1958,81 @@ function pageOfficeCustomers(){
   ${!isAdmin? `<div class="hint" style="text-align:right;margin-bottom:12px">این لیست را فقط مدیر دفتر می‌تواند اضافه یا ویرایش کند.</div>` : ''}
   ${genericToolbarHtml(scopeKey, {searchHint:'نام / تماس'})}
   ${list.length? `<div class="grid">${list.map(c=>customerCardHtml(c,{readonly:!isAdmin, kind:'office'})).join('')}</div>` : `<div class="empty-state"><div class="ic">🏢</div>مشتری دفتری ثبت نشده است</div>`}
+  `;
+}
+
+/* =========================================================================
+   فایل‌های دفتر (فقط مدیر اضافه می‌کند، همه مشاوران می‌بینند)
+   ========================================================================= */
+function addOfficeFile(dealType, propType){
+  openFormModal('فایل دفتر جدید — '+(dealType==='sale'?'فروش':'رهن و اجاره')+' / '+propTypeLabel(propType),
+    fileFields(dealType, propType), {propType}, async (data)=>{
+      data.id=uid(); data.dealType=dealType; data.propType=propType; data.agentName='مدیریت دفتر';
+      data.status = 'active';
+      data.createdAt=nowIso(); data.updatedAt=nowIso();
+      if(dealType==='sale'){
+        const area = Number(propType==='garden' ? (data.totalArea||data.buildingArea||0) : (data.area||data.buildingArea||0));
+        data.pricePerMeter = area>0? Math.round(Number(data.totalPrice||0)/area):0;
+      }
+      DB.officeFiles.push(data); await saveCollection('officeFiles'); toast('فایل دفتر ذخیره شد ✓'); renderApp();
+    });
+}
+function editOfficeFile(id){
+  const item = DB.officeFiles.find(f=>f.id===id); if(!item) return;
+  openFormModal('ویرایش فایل دفتر', fileFields(item.dealType, item.propType), item, async (data)=>{
+    if(item.dealType==='sale'){
+      const area = Number(item.propType==='garden' ? (data.totalArea||data.buildingArea||0) : (data.area||data.buildingArea||0));
+      data.pricePerMeter = area>0? Math.round(Number(data.totalPrice||0)/area):0;
+    }
+    Object.assign(item, data); item.updatedAt=nowIso();
+    await saveCollection('officeFiles'); toast('تغییرات ذخیره شد ✓'); renderApp();
+  });
+}
+async function deleteOfficeFile(id){
+  if(!confirm('این فایل دفتر حذف شود؟')) return;
+  DB.officeFiles = DB.officeFiles.filter(f=>f.id!==id); await saveCollection('officeFiles'); toast('حذف شد'); renderApp();
+}
+async function setOfficeFileStatus(id, status){
+  const item = DB.officeFiles.find(f=>f.id===id); if(!item) return;
+  item.status = status; item.updatedAt = nowIso();
+  const nowArchived = ARCHIVE_STATUSES.includes(status);
+  item.archivedAt = nowArchived ? item.updatedAt : null;
+  await saveCollection('officeFiles'); toast('وضعیت فایل دفتر به‌روزرسانی شد ✓'); renderApp();
+}
+function pageOfficeFiles(){
+  const dealType = UI.tab.ofDeal || 'rent';
+  const opts = propTypeOptions(dealType);
+  let propType = UI.tab.ofProp || 'apartment';
+  if(!opts.some(o=>o[0]===propType)) propType='apartment';
+  UI.tab.ofDeal=dealType; UI.tab.ofProp=propType;
+  const scopeKey = 'of_'+dealType+'_'+propType;
+  const isAdmin = SESSION.role==='admin';
+  const view = UI.view.ofView || 'active';
+  let list = DB.officeFiles.filter(f=>f.dealType===dealType && f.propType===propType);
+  list = list.filter(f=> view==='archive' ? isArchivedFile(f) : !isArchivedFile(f));
+  list = applySearchSortFilter(list, scopeKey, ['ownerName','address','area','totalArea','buildingArea'], fileMainPrice);
+  const activeFiles = DB.officeFiles.filter(f=>!isArchivedFile(f));
+  const cntRent = activeFiles.filter(f=>f.dealType==='rent').length;
+  const cntSale = activeFiles.filter(f=>f.dealType==='sale').length;
+  const tabsHtml = opts.map(([k,label])=>{
+    const cnt = DB.officeFiles.filter(f=>f.dealType===dealType && f.propType===k && (view==='archive'? isArchivedFile(f): !isArchivedFile(f))).length;
+    return `<button class="tab-btn ${propType===k?'active':''}" onclick="UI.tab.ofProp='${k}';renderApp();">${label} <span class="tab-count">${cnt}</span></button>`;
+  }).join('');
+  return `
+  <div class="tabs">
+    <button class="tab-btn ${dealType==='rent'?'active':''}" onclick="UI.tab.ofDeal='rent';renderApp();">رهن و اجاره <span class="tab-count">${cntRent}</span></button>
+    <button class="tab-btn ${dealType==='sale'?'active':''}" onclick="UI.tab.ofDeal='sale';renderApp();">فروش <span class="tab-count">${cntSale}</span></button>
+    ${tabsHtml}
+    <div style="flex:1"></div>
+    ${isAdmin? `<button class="btn btn-primary btn-sm" onclick="addOfficeFile('${dealType}','${propType}')">+ فایل دفتر جدید</button>` : ''}
+  </div>
+  <div class="tabs" style="margin-top:-6px">
+    <button class="tab-btn ${view==='active'?'active':''}" onclick="UI.view.ofView='active';renderApp();">🗂 فایل‌های فعال</button>
+    <button class="tab-btn ${view==='archive'?'active':''}" onclick="UI.view.ofView='archive';renderApp();">📦 آرشیو (فروخته/منقضی)</button>
+  </div>
+  ${!isAdmin? `<div class="hint" style="text-align:right;margin-bottom:12px">این لیست را فقط مدیر دفتر می‌تواند اضافه یا ویرایش کند.</div>` : ''}
+  ${genericToolbarHtml(scopeKey)}
+  ${list.length? `<div class="grid">${list.map(f=>fileCardHtml(f,{readonly:!isAdmin, kind:'office'})).join('')}</div>` : `<div class="empty-state"><div class="ic">🏢</div>${view==='archive'?'آرشیوی موجود نیست':'فایل دفتری ثبت نشده است'}</div>`}
   `;
 }
 
@@ -1883,16 +2141,21 @@ function pageAdminOversightFiles(){
   UI.tab.adminFilesDeal=dealType; UI.tab.adminFilesProp=propType;
   const scopeKey = 'admfiles_'+dealType+'_'+propType;
   const view = UI.view.adminFilesView || 'active';
-  let list = DB.files.filter(f=>f.dealType===dealType && f.propType===propType);
-  list = list.filter(f=> view==='archive' ? isArchivedFile(f) : !isArchivedFile(f));
-  if(UI.filterAgent) list = list.filter(f=>f.agentName===UI.filterAgent);
+  let base = DB.files.filter(f=> view==='archive' ? isArchivedFile(f) : !isArchivedFile(f));
+  if(UI.filterAgent) base = base.filter(f=>f.agentName===UI.filterAgent);
+  let list = base.filter(f=>f.dealType===dealType && f.propType===propType);
   list = applySearchSortFilter(list, scopeKey, ['ownerName','address','agentName'], fileMainPrice);
   const agents = agentList();
-  const propTabsHtml = opts.map(([k,label])=>`<button class="tab-btn ${propType===k?'active':''}" onclick="UI.tab.adminFilesProp='${k}';renderApp();">${label}</button>`).join('');
+  const cntRent = base.filter(f=>f.dealType==='rent').length;
+  const cntSale = base.filter(f=>f.dealType==='sale').length;
+  const propTabsHtml = opts.map(([k,label])=>{
+    const cnt = base.filter(f=>f.dealType===dealType && f.propType===k).length;
+    return `<button class="tab-btn ${propType===k?'active':''}" onclick="UI.tab.adminFilesProp='${k}';renderApp();">${label} <span class="tab-count">${cnt}</span></button>`;
+  }).join('');
   return `
   <div class="tabs">
-    <button class="tab-btn ${dealType==='rent'?'active':''}" onclick="UI.tab.adminFilesDeal='rent';renderApp();">رهن و اجاره</button>
-    <button class="tab-btn ${dealType==='sale'?'active':''}" onclick="UI.tab.adminFilesDeal='sale';renderApp();">فروش</button>
+    <button class="tab-btn ${dealType==='rent'?'active':''}" onclick="UI.tab.adminFilesDeal='rent';renderApp();">رهن و اجاره <span class="tab-count">${cntRent}</span></button>
+    <button class="tab-btn ${dealType==='sale'?'active':''}" onclick="UI.tab.adminFilesDeal='sale';renderApp();">فروش <span class="tab-count">${cntSale}</span></button>
     ${propTabsHtml}
   </div>
   <div class="tabs" style="margin-top:-6px">
@@ -1909,16 +2172,22 @@ function pageAdminOversightCustomers(){
   if(!opts.some(o=>o[0]===propType)) propType='apartment';
   UI.tab.adminCustDeal=dealType; UI.tab.adminCustProp=propType;
   const scopeKey = 'admcust_'+dealType+'_'+propType;
-  let list = DB.customers.filter(c=>c.dealType===dealType && c.propType===propType);
-  if(UI.filterAgent) list = list.filter(c=>c.agentName===UI.filterAgent);
+  let base = DB.customers.slice();
+  if(UI.filterAgent) base = base.filter(c=>c.agentName===UI.filterAgent);
+  let list = base.filter(c=>c.dealType===dealType && c.propType===propType);
   const priceFn = dealType==='buy'? (c=>Number(c.budgetMax||0)) : (c=>Number(c.budgetRahn||0));
   list = applySearchSortFilter(list, scopeKey, ['name','phone','agentName'], priceFn);
   const agents = agentList();
-  const propTabsHtml = opts.map(([k,label])=>`<button class="tab-btn ${propType===k?'active':''}" onclick="UI.tab.adminCustProp='${k}';renderApp();">${label}</button>`).join('');
+  const cntRent = base.filter(c=>c.dealType==='rent').length;
+  const cntBuy = base.filter(c=>c.dealType==='buy').length;
+  const propTabsHtml = opts.map(([k,label])=>{
+    const cnt = base.filter(c=>c.dealType===dealType && c.propType===k).length;
+    return `<button class="tab-btn ${propType===k?'active':''}" onclick="UI.tab.adminCustProp='${k}';renderApp();">${label} <span class="tab-count">${cnt}</span></button>`;
+  }).join('');
   return `
   <div class="tabs">
-    <button class="tab-btn ${dealType==='rent'?'active':''}" onclick="UI.tab.adminCustDeal='rent';renderApp();">رهن و اجاره</button>
-    <button class="tab-btn ${dealType==='buy'?'active':''}" onclick="UI.tab.adminCustDeal='buy';renderApp();">خرید</button>
+    <button class="tab-btn ${dealType==='rent'?'active':''}" onclick="UI.tab.adminCustDeal='rent';renderApp();">رهن و اجاره <span class="tab-count">${cntRent}</span></button>
+    <button class="tab-btn ${dealType==='buy'?'active':''}" onclick="UI.tab.adminCustDeal='buy';renderApp();">خرید <span class="tab-count">${cntBuy}</span></button>
     ${propTabsHtml}
   </div>
   ${genericToolbarHtml(scopeKey, {searchHint:'نام / تماس', extraRight:`<select onchange="UI.filterAgent=this.value; renderApp();"><option value="">همه مشاوران</option>${agents.map(a=>`<option value="${esc(a)}" ${UI.filterAgent===a?'selected':''}>${esc(a)}</option>`).join('')}</select>`})}
@@ -1959,6 +2228,7 @@ function contractCardHtml(item, kind){
       <div class="main-price">کمیسیون کل: ${toFa(item.commissionTotal)} تومان</div>
       <div class="words">سهم مشاور (${item.agentSharePercent||0}٪): ${toFa(commissionAgent)} تومان — سهم دفتر: ${toFa(commissionOffice)} تومان</div>
     </div>`:''}
+    ${item.shiriniAbdarchi? `<div class="desc-box">🍬 شیرینی آبدارچی: ${toFa(item.shiriniAbdarchi)} تومان</div>`:''}
     ${alarmHtml}
     ${photos.length? `<div class="photo-row">${photos.map(p=>`<div class="ph"><img src="${p}" onclick="window.__viewPhotoGlobal('${p.replace(/'/g,"")}')"></div>`).join('')}</div>`:''}
     ${item.notes?`<div class="desc-box">📝 ${esc(item.notes)}</div>`:''}
@@ -1994,16 +2264,18 @@ function pageAdminContracts(){
 function pageAccounting(){
   const all = [
     ...DB.cRent.map(c=>({...c, kind:'rent'})), ...DB.cSale.map(c=>({...c, kind:'sale'})), ...DB.cMosh.map(c=>({...c, kind:'mosharekat'}))
-  ].filter(c=>c.commissionTotal);
+  ].filter(c=>c.commissionTotal || c.shiriniAbdarchi);
   const totalCommission = all.reduce((s,c)=>s+Number(c.commissionTotal||0),0);
   const totalAgentShare = all.reduce((s,c)=>s+Math.round(Number(c.commissionTotal||0)*Number(c.agentSharePercent||0)/100),0);
   const totalOfficeShare = totalCommission-totalAgentShare;
+  const totalShirini = all.reduce((s,c)=>s+Number(c.shiriniAbdarchi||0),0);
   const byAgent = {};
   all.forEach(c=>{
     const a = c.agentName || 'نامشخص';
-    if(!byAgent[a]) byAgent[a]={count:0, commission:0, agentShare:0};
+    if(!byAgent[a]) byAgent[a]={count:0, commission:0, agentShare:0, shirini:0};
     byAgent[a].count++; byAgent[a].commission += Number(c.commissionTotal||0);
     byAgent[a].agentShare += Math.round(Number(c.commissionTotal||0)*Number(c.agentSharePercent||0)/100);
+    byAgent[a].shirini += Number(c.shiriniAbdarchi||0);
   });
   const maxCommission = Math.max(1, ...Object.values(byAgent).map(x=>x.commission));
   const kindLabel={rent:'اجاره',sale:'فروش',mosharekat:'مشارکت'};
@@ -2012,6 +2284,7 @@ function pageAccounting(){
     <div class="stat-card"><div class="n">${toFa(totalCommission)}</div><div class="l">جمع کل کمیسیون (تومان)</div></div>
     <div class="stat-card"><div class="n">${toFa(totalAgentShare)}</div><div class="l">جمع سهم مشاوران (تومان)</div></div>
     <div class="stat-card"><div class="n">${toFa(totalOfficeShare)}</div><div class="l">جمع سهم دفتر (تومان)</div></div>
+    <div class="stat-card"><div class="n">${toFa(totalShirini)}</div><div class="l">جمع شیرینی آبدارچی (تومان)</div></div>
     <div class="stat-card"><div class="n">${all.length}</div><div class="l">تعداد قراردادهای دارای کمیسیون</div></div>
   </div>
   <div class="section-title">📊 سهم هر مشاور از کمیسیون</div>
@@ -2025,14 +2298,14 @@ function pageAccounting(){
         <div style="background:var(--paper);border-radius:8px;height:10px;overflow:hidden">
           <div style="background:linear-gradient(90deg,var(--gold),var(--gold-2));height:100%;width:${(v.commission/maxCommission*100).toFixed(1)}%"></div>
         </div>
-        <div style="font-size:11px;color:var(--muted);margin-top:3px">سهم مشاور: ${toFa(v.agentShare)} تومان — سهم دفتر: ${toFa(v.commission-v.agentShare)} تومان</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:3px">سهم مشاور: ${toFa(v.agentShare)} تومان — سهم دفتر: ${toFa(v.commission-v.agentShare)} تومان${v.shirini?` — شیرینی آبدارچی: ${toFa(v.shirini)} تومان`:''}</div>
       </div>`).join('')}
   </div>
   <div class="section-title">📋 لیست کامل تراکنش‌های کمیسیون</div>
-  <div class="table-wrap"><table><thead><tr><th>نوع</th><th>آدرس</th><th>مشاور</th><th>کمیسیون کل</th><th>سهم مشاور (٪)</th><th>مبلغ سهم مشاور</th><th>سهم دفتر</th><th>تاریخ</th></tr></thead><tbody>
+  <div class="table-wrap"><table><thead><tr><th>نوع</th><th>آدرس</th><th>مشاور</th><th>کمیسیون کل</th><th>سهم مشاور (٪)</th><th>مبلغ سهم مشاور</th><th>سهم دفتر</th><th>شیرینی آبدارچی</th><th>تاریخ</th></tr></thead><tbody>
   ${all.sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt)).map(c=>{
     const agentAmt = Math.round(Number(c.commissionTotal||0)*Number(c.agentSharePercent||0)/100);
-    return `<tr><td>${kindLabel[c.kind]}</td><td>${esc((c.address||'').slice(0,28))}</td><td>${esc(c.agentName||'-')}</td><td>${toFa(c.commissionTotal)}</td><td>${c.agentSharePercent||0}٪</td><td>${toFa(agentAmt)}</td><td>${toFa(Number(c.commissionTotal||0)-agentAmt)}</td><td>${faDate(c.startDate||c.contractDate)}</td></tr>`;
+    return `<tr><td>${kindLabel[c.kind]}</td><td>${esc((c.address||'').slice(0,28))}</td><td>${esc(c.agentName||'-')}</td><td>${toFa(c.commissionTotal)}</td><td>${c.agentSharePercent||0}٪</td><td>${toFa(agentAmt)}</td><td>${toFa(Number(c.commissionTotal||0)-agentAmt)}</td><td>${toFa(c.shiriniAbdarchi||0)}</td><td>${faDate(c.startDate||c.contractDate)}</td></tr>`;
   }).join('')}
   </tbody></table></div>`;
 }
@@ -2050,6 +2323,7 @@ const AGENT_NAV = [
   {id:'mosharekat', label:'مشارکت در ساخت', ic:'🏗'},
   {id:'sazbank', label:'بانک سازنده', ic:'👷'},
   {id:'office_customers', label:'مشتریان دفتر', ic:'🏢'},
+  {id:'office_files', label:'فایل‌های دفتر', ic:'🗃'},
   {id:'backup', label:'بک‌آپ اطلاعات', ic:'💾'},
   {id:'settings', label:'ظاهر و تنظیمات', ic:'⚙️'},
 ];
@@ -2064,6 +2338,7 @@ const ADMIN_NAV = [
   {id:'admin_mosharekat', label:'مشارکت در ساخت', ic:'🏗'},
   {id:'sazbank', label:'بانک سازنده', ic:'👷'},
   {id:'office_customers', label:'مشتریان دفتر', ic:'🏢'},
+  {id:'office_files', label:'فایل‌های دفتر', ic:'🗃'},
   {id:'accounting', label:'حسابداری', ic:'🧮'},
   {id:'settings', label:'ظاهر و تنظیمات', ic:'⚙️'},
 ];
@@ -2071,7 +2346,7 @@ const PAGE_TITLES = {
   dashboard:'داشبورد', files_rent:'فایل‌های رهن و اجاره', files_sale:'فایل‌های فروش',
   cust_rent:'مشتریان رهن و اجاره', cust_buy:'مشتریان خرید', matching:'تطبیق فایل',
   opportunities:'بانک فرصت‌های آینده', admin_opportunities:'بانک فرصت‌های آینده (کل دفتر)',
-  office_customers:'مشتریان دفتر',
+  office_customers:'مشتریان دفتر', office_files:'فایل‌های دفتر',
   mosharekat:'بانک مشارکت در ساخت', sazbank:'بانک سازنده', backup:'بک‌آپ اطلاعات', settings:'تنظیمات',
   admin_dashboard:'داشبورد نظارتی مدیریت', agent_accounts:'مدیریت حساب مشاوران', admin_files:'نظارت بر فایل‌های مشاوران', admin_customers:'نظارت بر مشتریان مشاوران',
   admin_matching:'تطبیق فایل کل دفتر', contracts:'مدیریت قراردادها', admin_mosharekat:'بانک مشارکت در ساخت', accounting:'حسابداری دفتر'
@@ -2087,6 +2362,7 @@ function pageContent(){
     case 'matching': case 'admin_matching': return pageMatching();
     case 'opportunities': case 'admin_opportunities': return pageOpportunities();
     case 'office_customers': return pageOfficeCustomers();
+    case 'office_files': return pageOfficeFiles();
     case 'mosharekat': case 'admin_mosharekat': return pageMosharekat();
     case 'sazbank': return pageSazBank();
     case 'backup': return pageBackup();
