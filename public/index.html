@@ -1232,6 +1232,13 @@ function customerCardHtml(item, opts){
 function genericToolbarHtml(scopeKey, opts){
   opts = opts||{};
   const sid = 'tb-search-'+scopeKey, minId = 'tb-min-'+scopeKey, maxId = 'tb-max-'+scopeKey;
+  const minVal = UI.priceMin[scopeKey], maxVal = UI.priceMax[scopeKey];
+  const hasMin = minVal!==undefined && minVal!=='' && minVal!==null && !isNaN(Number(minVal));
+  const hasMax = maxVal!==undefined && maxVal!=='' && maxVal!==null && !isNaN(Number(maxVal));
+  const minShown = hasMin? toFa(minVal) : '';
+  const maxShown = hasMax? toFa(maxVal) : '';
+  const minWords = hasMin? (toFa(minVal)+' تومان — '+numberToWordsFa(minVal)) : '';
+  const maxWords = hasMax? (toFa(maxVal)+' تومان — '+numberToWordsFa(maxVal)) : '';
   return `
   <div class="toolbar">
     <input id="${sid}" type="text" class="grow" placeholder="جستجو (${opts.searchHint||'نام / آدرس / متراژ'})" value="${esc(UI.search[scopeKey]||'')}" oninput="UI.search['${scopeKey}']=this.value; refocusAfterRender('${sid}');">
@@ -1241,8 +1248,16 @@ function genericToolbarHtml(scopeKey, opts){
       <option value="price_asc" ${UI.sort[scopeKey]==='price_asc'?'selected':''}>قیمت: کم به زیاد</option>
       <option value="newest" ${UI.sort[scopeKey]==='newest'?'selected':''}>جدیدترین</option>
     </select>
-    <input id="${minId}" type="number" placeholder="حداقل قیمت" value="${UI.priceMin[scopeKey]||''}" style="width:120px" oninput="UI.priceMin['${scopeKey}']=this.value; refocusAfterRender('${minId}');">
-    <input id="${maxId}" type="number" placeholder="حداکثر قیمت" value="${UI.priceMax[scopeKey]||''}" style="width:120px" oninput="UI.priceMax['${scopeKey}']=this.value; refocusAfterRender('${maxId}');">
+    <div style="display:flex;flex-direction:column;min-width:140px">
+      <input id="${minId}" type="text" inputmode="numeric" placeholder="حداقل قیمت (تومان)" value="${esc(minShown)}" style="width:100%"
+        oninput="const d=this.value.replace(/[^\\d]/g,''); UI.priceMin['${scopeKey}']=d===''?'':Number(d); refocusAfterRender('${minId}');">
+      <div style="font-size:10.5px;color:var(--gold);margin-top:3px;line-height:1.6;min-height:13px">${minWords}</div>
+    </div>
+    <div style="display:flex;flex-direction:column;min-width:140px">
+      <input id="${maxId}" type="text" inputmode="numeric" placeholder="حداکثر قیمت (تومان)" value="${esc(maxShown)}" style="width:100%"
+        oninput="const d=this.value.replace(/[^\\d]/g,''); UI.priceMax['${scopeKey}']=d===''?'':Number(d); refocusAfterRender('${maxId}');">
+      <div style="font-size:10.5px;color:var(--gold);margin-top:3px;line-height:1.6;min-height:13px">${maxWords}</div>
+    </div>
     ${opts.extraRight||''}
   </div>`;
 }
@@ -1482,13 +1497,13 @@ function computeMatchesGeneric(dealCategory, customersList, filesList){ // 'sale
   });
   return results;
 }
-// مطابقت مشتریان مشاوران با فایل‌های مشاوران (همه‌ی مشاوران، صرف‌نظر از مالک فایل)
+// مطابقت مشتریان مشاوران با فایل‌های مشاوران + فایل‌های دفتر (یکجا، در یک کادر واحد برای هر مشتری)
 function computeMatches(dealCategory){
-  return computeMatchesGeneric(dealCategory, DB.customers, DB.files);
-}
-// مطابقت مشتریان مشاوران با «فایل‌های دفتر» (بانک فایل مدیر)
-function computeOfficeFileMatches(dealCategory){
-  return computeMatchesGeneric(dealCategory, DB.customers, DB.officeFiles);
+  const combinedFiles = [
+    ...DB.files.map(f=>({...f, __isOffice:false})),
+    ...DB.officeFiles.map(f=>({...f, __isOffice:true})),
+  ];
+  return computeMatchesGeneric(dealCategory, DB.customers, combinedFiles);
 }
 // مطابقت «مشتریان دفتر» (بانک مشتری مدیر) با فایل‌های مشاوران
 function computeOfficeCustomerMatches(dealCategory){
@@ -1649,10 +1664,10 @@ function matchFileCardHtml(file, opts){
   opts = opts||{};
   return `
   <div style="border:1px solid var(--line);border-radius:12px;padding:10px;background:var(--paper)">
-    <div style="font-weight:800;color:var(--ink);font-size:13px;margin-bottom:4px">${esc(file.address||'-')}</div>
+    <div style="font-weight:800;color:var(--ink);font-size:13px;margin-bottom:4px">${esc(file.address||'-')} ${file.__isOffice?'<span class="badge badge-navy" style="margin-inline-start:4px">فایل دفتر</span>':''}</div>
     <div style="font-size:12px;color:var(--muted);margin-bottom:6px">شباهت قیمت: <b style="color:var(--emerald)">${Math.round(opts.score*100)}٪</b></div>
     ${filePriceBoxHtml(file)}
-    ${opts.showAgentMeta? `<div class="meta-line" style="margin:2px 0 4px"><span>مشاور فایل: ${esc(file.agentName||'-')}</span></div>`:''}
+    ${opts.showAgentMeta? `<div class="meta-line" style="margin:2px 0 4px"><span>مشاور فایل: ${esc(file.__isOffice?'دفتر':(file.agentName||'-'))}</span></div>`:''}
     <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;align-items:center">
       ${opts.maskAgent
         ? `<div class="hint" style="font-size:12px;margin:0">🔒 این فایل مربوط به مشاور <b>${esc(file.agentName||'-')}</b> است — برای هماهنگی با مالک، با ایشان تماس بگیرید.</div>
@@ -1662,18 +1677,19 @@ function matchFileCardHtml(file, opts){
     </div>
   </div>`;
 }
-// کارت یک گروه تطبیق (یک مشتری + فایل‌های مرتبط با آن).
-// kind: 'std' (مشتری مشاوران × فایل مشاوران) | 'officeFiles' (مشتری مشاوران × فایل دفتر) | 'officeCustomers' (مشتری دفتر × فایل مشاوران)
+// کارت یک گروه تطبیق (یک مشتری + فایل‌های مرتبط با آن — شامل فایل‌های خود مشاور، فایل‌های دفتر و فایل‌های سایر مشاوران، همگی در یک کادر).
+// kind: 'std' (مشتری مشاوران × فایل‌های مشاوران/دفتر) | 'officeCustomers' (مشتری دفتر × فایل مشاوران)
 // وقتی تعداد فایل‌های مرتبط زیاد شود، فایل‌های اضافی داخل یک کشوی تاشو (details/summary) قرار می‌گیرند تا صفحه شلوغ نشود.
 function matchGroupHtml(group, kind){
   const isAdmin = SESSION.role==='admin';
   const cust = group.customer;
   const custIsOffice = kind==='officeCustomers';
-  const filesAreOffice = kind==='officeFiles';
   const VISIBLE_COUNT = 3;
   const renderOne = (m)=>{
-    const maskAgent = kind==='std' && !isAdmin && m.file.agentName && m.file.agentName!==SESSION.name;
-    return matchFileCardHtml(m.file, {score:m.score, maskAgent, showAgentMeta: isAdmin && !filesAreOffice});
+    // فایل‌های دفتر و فایل‌های خود مشاور همیشه کامل (با شماره مالک) نمایش داده می‌شوند؛
+    // فایل‌های سایر مشاوران، بدون شماره مالک و فقط با نام مشاور مربوطه.
+    const maskAgent = kind==='std' && !isAdmin && !m.file.__isOffice && m.file.agentName && m.file.agentName!==SESSION.name;
+    return matchFileCardHtml(m.file, {score:m.score, maskAgent, showAgentMeta: isAdmin});
   };
   const visible = group.matches.slice(0, VISIBLE_COUNT);
   const rest = group.matches.slice(VISIBLE_COUNT);
@@ -1690,7 +1706,6 @@ function matchGroupHtml(group, kind){
       </div>
       <span class="badge badge-navy">${toFa(group.matches.length)} فایل مرتبط</span>
     </div>
-    ${filesAreOffice? `<div class="hint" style="font-size:12px;margin:6px 0 0">📁 فایل(های) دفتر با این مشتری مطابقت دارد</div>`:''}
     ${custIsOffice? `<div class="hint" style="font-size:12px;margin:6px 0 0">🏢 این مشتری دفتر با فایل(های) شما مطابقت دارد</div>`:''}
     <div class="grid" style="margin-top:8px">${visible.map(renderOne).join('')}</div>
     ${rest.length? `<details style="margin-top:8px">
@@ -1704,27 +1719,23 @@ function pageMatching(){
   UI.tab.matching = cat;
   const isAdmin = SESSION.role==='admin';
 
-  // ۱) مطابقت مشتری هر مشاور با فایل‌های همه‌ی مشاوران (برای مدیر: همه؛ برای مشاور: فقط مشتری‌های خودش)
+  // ۱) مطابقت مشتری هر مشاور با فایل‌های همه‌ی مشاوران + فایل‌های دفتر، همه در یک کادر
+  //    (برای مدیر: همه‌ی مشتریان؛ برای مشاور: فقط مشتری‌های خودش)
   const stdRent = computeMatches('rent').filter(r=> r.customer.agentName===SESSION.name || isAdmin);
   const stdSale = computeMatches('sale').filter(r=> r.customer.agentName===SESSION.name || isAdmin);
 
-  // ۲) مطابقت مشتری‌های مشاوران با «فایل‌های دفتر» (برای مدیر: همه؛ برای مشاور: فقط مشتری‌های خودش)
-  const officeFileRent = computeOfficeFileMatches('rent').filter(r=> r.customer.agentName===SESSION.name || isAdmin);
-  const officeFileSale = computeOfficeFileMatches('sale').filter(r=> r.customer.agentName===SESSION.name || isAdmin);
-
-  // ۳) مطابقت «مشتریان دفتر» با فایل‌های مشاوران (برای مدیر: همه؛ برای مشاور: فقط فایل‌های خودش)
+  // ۲) مطابقت «مشتریان دفتر» با فایل‌های مشاوران (برای مدیر: همه؛ برای مشاور: فقط فایل‌های خودش)
   const filterOfficeCustResults = (raw)=> isAdmin ? raw :
     raw.map(r=>({customer:r.customer, matches:r.matches.filter(m=>m.file.agentName===SESSION.name)})).filter(r=>r.matches.length);
   const officeCustRent = filterOfficeCustResults(computeOfficeCustomerMatches('rent'));
   const officeCustSale = filterOfficeCustResults(computeOfficeCustomerMatches('sale'));
 
-  const countRent = stdRent.length + officeFileRent.length + officeCustRent.length;
-  const countSale = stdSale.length + officeFileSale.length + officeCustSale.length;
+  const countRent = stdRent.length + officeCustRent.length;
+  const countSale = stdSale.length + officeCustSale.length;
 
   const std = cat==='rent'? stdRent : stdSale;
-  const officeFileResults = cat==='rent'? officeFileRent : officeFileSale;
   const officeCustResults = cat==='rent'? officeCustRent : officeCustSale;
-  const total = std.length + officeFileResults.length + officeCustResults.length;
+  const total = std.length + officeCustResults.length;
 
   return `
   <div class="tabs">
@@ -1732,8 +1743,7 @@ function pageMatching(){
     <button class="tab-btn ${cat==='sale'?'active':''}" onclick="UI.tab.matching='sale';renderApp();">خرید و فروش <span class="tab-count">${toFa(countSale)}</span></button>
   </div>
   ${total===0? `<div class="empty-state"><div class="ic">🔍</div>در حال حاضر تطبیقی با شباهت قیمت حداقل ۸۰٪ یافت نشد</div>` : ''}
-  ${std.length? `<div class="section-title">🔍 مطابقت مشتریان با فایل‌ها</div>${std.map(r=>matchGroupHtml(r,'std')).join('')}` : ''}
-  ${officeFileResults.length? `<div class="section-title">🏢 مطابقت مشتریان با فایل‌های دفتر</div>${officeFileResults.map(r=>matchGroupHtml(r,'officeFiles')).join('')}` : ''}
+  ${std.length? `<div class="section-title">🔍 مطابقت مشتریان با فایل‌ها (خودِ مشاور، دفتر و سایر مشاوران)</div>${std.map(r=>matchGroupHtml(r,'std')).join('')}` : ''}
   ${officeCustResults.length? `<div class="section-title">🏢 مطابقت مشتریان دفتر با فایل‌های شما</div>${officeCustResults.map(r=>matchGroupHtml(r,'officeCustomers')).join('')}` : ''}
   `;
 }

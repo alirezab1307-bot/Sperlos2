@@ -141,16 +141,24 @@ function sendJson(res, status, obj) {
 }
 function readBody(req) {
   return new Promise((resolve, reject) => {
-    let data = '';
+    // نکته‌ی مهم: باید تکه‌های (chunk) دریافتی را به‌صورت Buffer خام نگه داریم و فقط در پایان،
+    // کل بادی را یکجا با UTF-8 دیکد کنیم. اگر هر chunk را جداگانه دیکد کنیم (مثلاً با «data += chunk»
+    // که به‌صورت ضمنی chunk.toString() را روی هر تکه صدا می‌زند)، وقتی یک کاراکتر فارسی/چندبایتی
+    // درست روی مرز دو chunk شکسته شود، آن کاراکتر و گاهی چند کاراکتر اطرافش به � (کاراکتر جایگزین)
+    // تبدیل و برای همیشه در دیتابیس ذخیره می‌شود — دقیقاً همان باگیِ که در نام یکی از مشاوران دیده شد.
+    const chunks = [];
+    let totalLen = 0;
     req.on('data', (chunk) => {
-      data += chunk;
-      if (data.length > 25 * 1024 * 1024) { // سقف ۲۵ مگابایت برای هر درخواست (به‌خاطر عکس قراردادها)
+      chunks.push(chunk);
+      totalLen += chunk.length;
+      if (totalLen > 25 * 1024 * 1024) { // سقف ۲۵ مگابایت برای هر درخواست (به‌خاطر عکس قراردادها)
         reject(new Error('payload too large'));
         req.destroy();
       }
     });
     req.on('end', () => {
-      if (!data) return resolve({});
+      if (!totalLen) return resolve({});
+      const data = Buffer.concat(chunks).toString('utf8');
       try { resolve(JSON.parse(data)); } catch (e) { resolve({}); }
     });
     req.on('error', reject);
