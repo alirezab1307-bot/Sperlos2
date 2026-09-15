@@ -2141,6 +2141,204 @@ function pageAdminDashboard(){
 }
 
 /* =========================================================================
+   تحلیل عملکرد مشاوران (پنل مدیر)
+   یک آمار ریز و کامل از فعالیت هر مشاور: فایل‌ها، مشتریان، فرصت‌ها، قراردادها،
+   کمیسیون، نرخ تبدیل و آخرین فعالیت — تا مدیر به‌راحتی عملکرد هر نفر را پایش کند.
+   ========================================================================= */
+function agentPerformancePeriodStart(period){
+  const now = new Date();
+  if(period==='month'){ return new Date(now.getFullYear(), now.getMonth(), 1).toISOString(); }
+  if(period==='last30'){ return addDays(now.toISOString(), -30); }
+  if(period==='last90'){ return addDays(now.toISOString(), -90); }
+  return null; // all-time
+}
+function computeAgentPerformance(agentName, periodStartIso){
+  const inPeriod = (d)=> !periodStartIso || (d && new Date(d) >= new Date(periodStartIso));
+
+  const files = DB.files.filter(f=>f.agentName===agentName && inPeriod(f.createdAt));
+  const filesActive = files.filter(f=>!isArchivedFile(f));
+  const filesArchived = files.filter(f=>isArchivedFile(f));
+  const filesSold = files.filter(f=>f.status==='closed');
+  const filesExpired = files.filter(f=>f.status==='expired');
+  const filesRent = files.filter(f=>f.dealType==='rent');
+  const filesSale = files.filter(f=>f.dealType==='sale');
+  const filesByProp = {};
+  files.forEach(f=>{ const k=propTypeLabel(f.propType); filesByProp[k]=(filesByProp[k]||0)+1; });
+
+  const customers = DB.customers.filter(c=>c.agentName===agentName && inPeriod(c.createdAt));
+  const custRent = customers.filter(c=>c.dealType==='rent');
+  const custBuy = customers.filter(c=>c.dealType==='buy');
+
+  const opportunities = DB.opportunities.filter(o=>o.agentName===agentName && inPeriod(o.createdAt));
+  const overdueOpp = opportunities.filter(o=>o.nextFollowupDate && new Date(o.nextFollowupDate) <= new Date());
+
+  const cRent = DB.cRent.filter(c=>c.agentName===agentName && inPeriod(c.createdAt));
+  const cSale = DB.cSale.filter(c=>c.agentName===agentName && inPeriod(c.createdAt));
+  const cMosh = DB.cMosh.filter(c=>c.agentName===agentName && inPeriod(c.createdAt));
+  const cOther = DB.cOther.filter(c=>c.agentName===agentName && inPeriod(c.createdAt));
+  const commissionable = [...cRent, ...cSale, ...cMosh];
+  const totalContracts = commissionable.length + cOther.length;
+  const totalCommission = commissionable.reduce((s,c)=>s+Number(c.commissionTotal||0),0);
+  const agentShare = commissionable.reduce((s,c)=>s+Math.round(Number(c.commissionTotal||0)*Number(c.agentSharePercent||0)/100),0);
+  const officeShare = totalCommission - agentShare;
+  const teaBoy = commissionable.reduce((s,c)=>s+Number(c.teaBoyFee||0),0);
+
+  const mMelk = DB.mMelk.filter(x=>x.agentName===agentName && inPeriod(x.createdAt));
+  const mSaz = DB.mSaz.filter(x=>x.agentName===agentName && inPeriod(x.createdAt));
+  const sazBank = DB.sazBank.filter(x=>x.agentName===agentName && inPeriod(x.createdAt));
+
+  const allDates = [...files, ...customers, ...opportunities, ...commissionable, ...cOther]
+    .map(x=>x.updatedAt||x.createdAt).filter(Boolean).sort((a,b)=>new Date(b)-new Date(a));
+  const lastActivity = allDates[0] || null;
+  const idleDays = lastActivity? daysBetween(lastActivity, new Date().toISOString()) : null;
+
+  const registeredTotal = files.length + customers.length;
+  const conversionRate = registeredTotal>0 ? Math.round((totalContracts/registeredTotal)*100) : 0;
+
+  const closedWithDuration = filesSold.filter(f=>f.archivedAt && f.createdAt);
+  const avgDaysToClose = closedWithDuration.length
+    ? Math.round(closedWithDuration.reduce((s,f)=>s+daysBetween(f.createdAt, f.archivedAt),0)/closedWithDuration.length)
+    : null;
+
+  return {
+    agentName, files, filesActive, filesArchived, filesSold, filesExpired, filesRent, filesSale, filesByProp,
+    customers, custRent, custBuy, opportunities, overdueOpp,
+    cRent, cSale, cMosh, cOther, totalContracts, totalCommission, agentShare, officeShare, teaBoy,
+    mMelk, mSaz, sazBank, lastActivity, idleDays, registeredTotal, conversionRate, avgDaysToClose,
+    lastBackup: DB.backupMeta[agentName] || null,
+  };
+}
+function agentRosterForPerformance(){
+  const names = new Set();
+  DB.accounts.filter(a=>a.role==='agent').forEach(a=>names.add(a.name));
+  agentList().forEach(n=>names.add(n));
+  return Array.from(names);
+}
+function perfMiniStat(label, value, opts){
+  opts = opts||{};
+  return `<div style="background:var(--paper);border-radius:10px;padding:8px 10px;text-align:center">
+    <div style="font-size:16px;font-weight:800;color:${opts.color||'var(--ink)'}">${value}</div>
+    <div style="font-size:10.5px;color:var(--muted);margin-top:2px">${label}</div>
+  </div>`;
+}
+function agentPerformanceCardHtml(p, rank){
+  const rankBadge = rank===1?'🥇':rank===2?'🥈':rank===3?'🥉':null;
+  const idleWarn = p.idleDays!==null && p.idleDays>14;
+  const noActivity = p.lastActivity===null;
+  return `
+  <div class="card" style="margin-bottom:14px">
+    <div class="card-top">
+      <div>
+        <div class="card-title">${rankBadge? rankBadge+' ':''}${esc(p.agentName)}
+          ${p.overdueOpp.length? `<span class="badge badge-danger" style="margin-inline-start:6px">${toFa(p.overdueOpp.length)} پیگیری فرصت عقب‌افتاده</span>`:''}
+          ${idleWarn? `<span class="badge badge-danger" style="margin-inline-start:6px">${toFa(p.idleDays)} روز بدون فعالیت</span>`:''}
+          ${noActivity? `<span class="badge badge-navy" style="margin-inline-start:6px">بدون فعالیت ثبت‌شده</span>`:''}
+        </div>
+        <div class="meta-line" style="margin-top:4px"><span>آخرین فعالیت: ${p.lastActivity? faDateTime(p.lastActivity):'—'}</span><span>آخرین بک‌آپ: ${p.lastBackup? faDate(p.lastBackup):'بدون بک‌آپ'}</span></div>
+      </div>
+      <span class="badge badge-gold" style="font-size:13px">${toFa(p.totalCommission)} تومان کمیسیون</span>
+    </div>
+
+    <div class="section-title" style="margin:14px 0 8px;font-size:13px">🗂 فایل‌ها (${toFa(p.files.length)})</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(90px,1fr));gap:8px">
+      ${perfMiniStat('فعال', toFa(p.filesActive.length))}
+      ${perfMiniStat('آرشیو', toFa(p.filesArchived.length))}
+      ${perfMiniStat('فروش/رهن', toFa(p.filesSale.length)+' / '+toFa(p.filesRent.length))}
+      ${perfMiniStat('فروخته‌شده', toFa(p.filesSold.length), {color:'var(--emerald)'})}
+      ${perfMiniStat('منقضی', toFa(p.filesExpired.length), {color:'var(--danger)'})}
+    </div>
+    ${Object.keys(p.filesByProp).length? `<div style="font-size:11px;color:var(--muted);margin-top:6px">به تفکیک نوع ملک: ${Object.entries(p.filesByProp).map(([k,v])=>`${k}: ${toFa(v)}`).join(' — ')}</div>`:''}
+
+    <div class="section-title" style="margin:14px 0 8px;font-size:13px">👥 مشتریان (${toFa(p.customers.length)})</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(90px,1fr));gap:8px">
+      ${perfMiniStat('رهن و اجاره', toFa(p.custRent.length))}
+      ${perfMiniStat('خرید', toFa(p.custBuy.length))}
+      ${perfMiniStat('فرصت‌های آینده', toFa(p.opportunities.length))}
+      ${perfMiniStat('پیگیری عقب‌افتاده', toFa(p.overdueOpp.length), {color: p.overdueOpp.length? 'var(--danger)':'var(--ink)'})}
+    </div>
+
+    <div class="section-title" style="margin:14px 0 8px;font-size:13px">📄 قراردادها (${toFa(p.totalContracts)})</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(90px,1fr));gap:8px">
+      ${perfMiniStat('اجاره', toFa(p.cRent.length))}
+      ${perfMiniStat('فروش', toFa(p.cSale.length))}
+      ${perfMiniStat('مشارکت', toFa(p.cMosh.length))}
+      ${perfMiniStat('بنگاه دیگر', toFa(p.cOther.length))}
+    </div>
+    <div class="price-box" style="margin-top:10px">
+      <div class="main-price">کمیسیون کل: ${toFa(p.totalCommission)} تومان</div>
+      <div class="words">سهم مشاور: ${toFa(p.agentShare)} تومان — سهم دفتر: ${toFa(p.officeShare)} تومان${p.teaBoy?' — 🍬 شیرینی آبدارچی: '+toFa(p.teaBoy)+' تومان':''}</div>
+    </div>
+
+    ${(p.mMelk.length+p.mSaz.length+p.sazBank.length)? `<div class="meta-line" style="margin-top:10px"><span>🏗 ملک مشارکتی: ${toFa(p.mMelk.length)}</span><span>درخواست سازنده: ${toFa(p.mSaz.length)}</span><span>بانک سازنده: ${toFa(p.sazBank.length)}</span></div>`:''}
+
+    <div class="section-title" style="margin:14px 0 6px;font-size:13px">📊 نرخ تبدیل به قرارداد</div>
+    <div style="background:var(--paper);border-radius:8px;height:12px;overflow:hidden">
+      <div style="background:linear-gradient(90deg,var(--gold),var(--gold-2));height:100%;width:${Math.min(100,p.conversionRate)}%"></div>
+    </div>
+    <div style="font-size:11px;color:var(--muted);margin-top:4px">${toFa(p.totalContracts)} قرارداد از ${toFa(p.registeredTotal)} فایل/مشتری ثبت‌شده — ${toFa(p.conversionRate)}٪${p.avgDaysToClose!==null? ' — میانگین بستن فایل: '+toFa(p.avgDaysToClose)+' روز':''}</div>
+  </div>`;
+}
+function pageAgentPerformance(){
+  const period = UI.tab.perfPeriod || 'all';
+  const selectedAgent = UI.tab.perfAgent || '';
+  UI.tab.perfPeriod = period; UI.tab.perfAgent = selectedAgent;
+  const periodStart = agentPerformancePeriodStart(period);
+  const roster = agentRosterForPerformance().sort((a,b)=>a.localeCompare(b,'fa'));
+  const allPerf = roster.map(a=>computeAgentPerformance(a, periodStart));
+
+  const officeFiles = allPerf.reduce((s,p)=>s+p.files.length,0);
+  const officeCustomers = allPerf.reduce((s,p)=>s+p.customers.length,0);
+  const officeContracts = allPerf.reduce((s,p)=>s+p.totalContracts,0);
+  const officeCommission = allPerf.reduce((s,p)=>s+p.totalCommission,0);
+
+  const ranked = allPerf.slice().sort((a,b)=>b.totalCommission-a.totalCommission);
+  const maxCommission = Math.max(1, ...ranked.map(p=>p.totalCommission));
+
+  const shownList = selectedAgent ? allPerf.filter(p=>p.agentName===selectedAgent) : ranked;
+
+  const periodTabs = [['all','همه‌ی زمان‌ها'],['month','از ابتدای این ماه'],['last30','۳۰ روز اخیر'],['last90','۹۰ روز اخیر']];
+
+  return `
+  <div class="tabs">
+    ${periodTabs.map(([k,label])=>`<button class="tab-btn ${period===k?'active':''}" onclick="UI.tab.perfPeriod='${k}';renderApp();">${label}</button>`).join('')}
+    <div style="flex:1"></div>
+    <select onchange="UI.tab.perfAgent=this.value; renderApp();" style="padding:9px 12px;border:1px solid var(--line);border-radius:9px;font-size:13px;background:var(--paper)">
+      <option value="">همه مشاوران</option>
+      ${roster.map(a=>`<option value="${esc(a)}" ${selectedAgent===a?'selected':''}>${esc(a)}</option>`).join('')}
+    </select>
+  </div>
+
+  <div class="stat-grid">
+    <div class="stat-card"><div class="n">${toFa(roster.length)}</div><div class="l">تعداد مشاوران</div></div>
+    <div class="stat-card"><div class="n">${toFa(officeFiles)}</div><div class="l">فایل ثبت‌شده در بازه</div></div>
+    <div class="stat-card"><div class="n">${toFa(officeCustomers)}</div><div class="l">مشتری ثبت‌شده در بازه</div></div>
+    <div class="stat-card"><div class="n">${toFa(officeContracts)}</div><div class="l">قرارداد در بازه</div></div>
+    <div class="stat-card"><div class="n">${toFa(officeCommission)}</div><div class="l">جمع کمیسیون بازه (تومان)</div></div>
+  </div>
+
+  ${!selectedAgent? `
+  <div class="section-title">🏆 رتبه‌بندی مشاوران بر اساس کمیسیون</div>
+  <div class="card" style="margin-bottom:16px">
+    ${ranked.length===0? `<div class="empty-state"><div class="ic">📊</div>هنوز داده‌ای برای این بازه ثبت نشده است</div>` :
+    ranked.map((p,i)=>`
+      <div style="margin-bottom:12px">
+        <div style="display:flex;justify-content:space-between;font-size:13px;font-weight:700;margin-bottom:5px">
+          <span>${i===0?'🥇 ':i===1?'🥈 ':i===2?'🥉 ':''}${esc(p.agentName)}</span>
+          <span>${toFa(p.totalCommission)} تومان — ${toFa(p.totalContracts)} قرارداد</span>
+        </div>
+        <div style="background:var(--paper);border-radius:8px;height:10px;overflow:hidden">
+          <div style="background:linear-gradient(90deg,var(--gold),var(--gold-2));height:100%;width:${(p.totalCommission/maxCommission*100).toFixed(1)}%"></div>
+        </div>
+      </div>`).join('')}
+  </div>` : ''}
+
+  <div class="section-title">${selectedAgent? '🔎 جزئیات کامل عملکرد '+esc(selectedAgent) : '📋 جزئیات کامل عملکرد هر مشاور'}</div>
+  ${shownList.length===0? `<div class="empty-state"><div class="ic">📈</div>مشاوری برای نمایش وجود ندارد</div>` :
+    shownList.map(p=>agentPerformanceCardHtml(p, ranked.findIndex(x=>x.agentName===p.agentName)+1)).join('')}
+  `;
+}
+
+/* =========================================================================
    پنل مدیریت: نظارت فایل‌ها و مشتریان
    ========================================================================= */
 function pageAdminOversightFiles(){
@@ -2339,6 +2537,7 @@ const AGENT_NAV = [
 ];
 const ADMIN_NAV = [
   {id:'admin_dashboard', label:'داشبورد نظارتی', ic:'🏛'},
+  {id:'agent_performance', label:'تحلیل عملکرد مشاوران', ic:'📈'},
   {id:'agent_accounts', label:'مدیریت حساب مشاوران', ic:'🔐'},
   {id:'admin_files', label:'نظارت فایل‌ها', ic:'🗂'},
   {id:'admin_customers', label:'نظارت مشتریان', ic:'👥'},
@@ -2358,7 +2557,7 @@ const PAGE_TITLES = {
   opportunities:'بانک فرصت‌های آینده', admin_opportunities:'بانک فرصت‌های آینده (کل دفتر)',
   office_customers:'مشتریان دفتر', office_files:'فایل‌های دفتر',
   mosharekat:'بانک مشارکت در ساخت', sazbank:'بانک سازنده', backup:'بک‌آپ اطلاعات', settings:'تنظیمات',
-  admin_dashboard:'داشبورد نظارتی مدیریت', agent_accounts:'مدیریت حساب مشاوران', admin_files:'نظارت بر فایل‌های مشاوران', admin_customers:'نظارت بر مشتریان مشاوران',
+  admin_dashboard:'داشبورد نظارتی مدیریت', agent_performance:'تحلیل عملکرد مشاوران', agent_accounts:'مدیریت حساب مشاوران', admin_files:'نظارت بر فایل‌های مشاوران', admin_customers:'نظارت بر مشتریان مشاوران',
   admin_matching:'تطبیق فایل کل دفتر', contracts:'مدیریت قراردادها', admin_mosharekat:'بانک مشارکت در ساخت', accounting:'حسابداری دفتر'
 };
 
@@ -2378,6 +2577,7 @@ function pageContent(){
     case 'backup': return pageBackup();
     case 'settings': return pageSettings();
     case 'admin_dashboard': return pageAdminDashboard();
+    case 'agent_performance': return pageAgentPerformance();
     case 'agent_accounts': return pageAccounts();
     case 'admin_files': return pageAdminOversightFiles();
     case 'admin_customers': return pageAdminOversightCustomers();
