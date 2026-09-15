@@ -28,12 +28,14 @@ const crypto = require('crypto');
 
 const PORT = process.env.PORT || 3000;
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
-const DATA_FILE = path.join(DATA_DIR, 'data.json');
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const SESSIONS_KEY = '__sessions__';
 const ACCOUNTS_KEY = 'sl_accounts_v1';
 const OFFICE_CUSTOMERS_KEY = 'sl_office_customers_v1'; // فقط مدیر اجازه‌ی نوشتن دارد
 const OFFICE_FILES_KEY = 'sl_office_files_v1'; // فایل‌های دفتر — فقط مدیر اجازه‌ی نوشتن دارد
+const MESSAGES_KEY = 'sl_messages_v1'; // گفتگوی داخلی مدیر/مشاوران — فقط از طریق مسیر اختصاصی /api/messages (نه storage عمومی) در دسترس است تا هر مشاور فقط پیام‌های خودش را ببیند
+const ATTENDANCE_KEY = 'sl_attendance_v1'; // ثبت روزانه‌ی ساعت ورود/خروج مشاوران
+const ACTIVITY_KEY = 'sl_activity_v1'; // ثبت روزانه‌ی تماس/بازدید/آگهی دیوار مشاوران
 
 /* ---------------------------------------------------------------
    لایه ذخیره‌سازی (Store) — یک رابط ساده get/set که پشت آن یا
@@ -43,16 +45,68 @@ let BACKEND = 'file';
 let cache = {}; // آینه‌ی حافظه‌ای از همه‌ی کلیدها، برای خواندن سریع بدون رفت‌وبرگشت به دیتابیس
 
 // --- حالت فایل ---
-function fileLoadAll() {
-  try {
-    return JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
-  } catch (e) { return {}; }
+// نکته‌ی مهم (رفع باگ کندی/گم‌شدن اطلاعات): قبلاً کل داده‌ی برنامه (همه‌ی فایل‌ها، مشتریان،
+// قراردادها، تردد، فعالیت‌ها و ...) در یک فایل data.json ذخیره می‌شد و با هر تغییر کوچک —
+// حتی تغییر یک فیلد در یک قرارداد — کل این فایل (که با عکس‌های قرارداد می‌تواند چند مگابایت
+// باشد) به‌صورت سینک (fs.writeFileSync) دوباره نوشته می‌شد. چون Node.js تک‌رشته‌ای است،
+// این نوشتن سینکِ حجیم، کل سرور را برای همه‌ی مشاوران هم‌زمان چند ثانیه «فریز» می‌کرد
+// (دقیقاً همان تأخیر ۵ تا ۱۵ ثانیه‌ای که هنگام ذخیره دیده می‌شد) و هرچه داده بزرگ‌تر
+// می‌شد، این تأخیر هم بیشتر می‌شد.
+// راه‌حل: هر کلید (sl_files، sl_customers و ...) در فایل جداگانه‌ی خودش ذخیره می‌شود، پس
+// ذخیره‌ی یک قرارداد فقط همان یک فایل کوچک را می‌نویسد نه کل دیتابیس را؛ و نوشتن روی
+// دیسک به‌صورت async (fs.promises) انجام می‌شود تا رویدادحلقه‌ی Node مسدود نشود و
+// درخواست‌های هم‌زمان سایر مشاوران معطل نمانند.
+function keyFilePath(key) {
+  const safe = String(key).replace(/[^a-zA-Z0-9_.-]/g, '_');
+  return path.join(DATA_DIR, safe + '.json');
 }
-function fileSaveAll() {
-  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-  const tmp = DATA_FILE + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify(cache, null, 2));
-  fs.renameSync(tmp, DATA_FILE); // نوشتن اتمیک تا در صورت قطعی برق دیتا خراب نشود
+function fileLoadAll() {
+  const obj = {};
+  if (fs.existsSync(DATA_DIR)) {
+    for (const fname of fs.readdirSync(DATA_DIR)) {
+      if (!fname.endsWith('.json') || fname.endsWith('.tmp.json')) continue;
+      const key = fname.slice(0, -5);
+      try { obj[key] = JSON.parse(fs.readFileSync(path.join(DATA_DIR, fname), 'utf8')); }
+      catch (e) { console.error(`⚠️ فایل «${fname}» خراب بود و نادیده گرفته شد:`, e.message); }
+    }
+  }
+  // سازگاری با نسخه‌ی قدیمی: اگر هنوز data.json تک‌فایلی از قبل مانده، مقادیرش را (فقط
+  // برای کلیدهایی که هنوز به قالب جدید مهاجرت نکرده‌اند) بخوان تا چیزی گم نشود.
+  const legacyPath = path.join(DATA_DIR, 'data.json');
+  if (fs.existsSync(legacyPath)) {
+    try {
+      const legacy = JSON.parse(fs.readFileSync(legacyPath, 'utf8'));
+      Object.keys(legacy).forEach(k => { if (!(k in obj)) obj[k] = legacy[k]; });
+    } catch (e) { /* نادیده گرفتن فایل قدیمی خراب */ }
+  }
+  return obj;
+}
+const __pendingWrites = new Map(); // key -> {inFlight, queued}
+async function persistKeyToDisk(key) {
+  let state = __pendingWrites.get(key);
+  if (!state) { state = { inFlight: false, queued: false }; __pendingWrites.set(key, state); }
+  if (state.inFlight) { state.queued = true; return; } // نوشتن قبلی این کلید هنوز تمام نشده؛ وقتی تمام شد دوباره با آخرین نسخه‌ی cache نوشته می‌شود
+  state.inFlight = true;
+  try {
+    if (!fs.existsSync(DATA_DIR)) await fs.promises.mkdir(DATA_DIR, { recursive: true });
+    const fp = keyFilePath(key);
+    const tmp = fp + '.tmp.json';
+    await fs.promises.writeFile(tmp, JSON.stringify(cache[key]));
+    await fs.promises.rename(tmp, fp); // نوشتن اتمیک تا در صورت قطعی برق دیتا خراب نشود
+  } catch (e) {
+    console.error(`❌ خطا در ذخیره‌ی کلید «${key}» روی دیسک:`, e);
+  } finally {
+    state.inFlight = false;
+    if (state.queued) { state.queued = false; persistKeyToDisk(key); }
+  }
+}
+async function migrateLegacyIfNeeded() {
+  const legacyPath = path.join(DATA_DIR, 'data.json');
+  if (!fs.existsSync(legacyPath)) return;
+  console.log('ℹ️  در حال مهاجرت داده‌ها از قالب قدیمی (یک فایل) به قالب جدید (هر بخش، یک فایل جدا)...');
+  await Promise.all(Object.keys(cache).map(k => persistKeyToDisk(k)));
+  try { fs.unlinkSync(legacyPath); } catch (e) { /* بی‌اهمیت */ }
+  console.log('✅ مهاجرت انجام شد — داده‌ها دیگر به data.json نیاز ندارند.');
 }
 
 // --- حالت MongoDB ---
@@ -79,7 +133,7 @@ async function storeGet(key) {
 async function storeSet(key, value) {
   cache[key] = value;
   if (BACKEND === 'mongo') await mongoSaveKey(key, value);
-  else fileSaveAll();
+  else await persistKeyToDisk(key);
 }
 
 async function initStorage() {
@@ -91,7 +145,8 @@ async function initStorage() {
   } else {
     BACKEND = 'file';
     cache = fileLoadAll();
-    console.log(`ℹ️  حالت فایل فعال است — داده‌ها در ${DATA_FILE} ذخیره می‌شوند`);
+    await migrateLegacyIfNeeded();
+    console.log(`ℹ️  حالت فایل فعال است — داده‌ها در ${DATA_DIR} ذخیره می‌شوند (هر بخش در فایل جدای خودش)`);
   }
   if (!cache[SESSIONS_KEY]) cache[SESSIONS_KEY] = {};
   if (!cache[ACCOUNTS_KEY]) cache[ACCOUNTS_KEY] = [];
@@ -330,6 +385,54 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, { accounts: getAccounts().map(publicAccount) });
     }
 
+    /* ---------- گفتگوی داخلی (چت) مدیر ⇄ مشاوران ----------
+       هر رشته‌ی گفتگو با agentName مشخص می‌شود (نام همان مشاور طرف گفتگو با مدیر).
+       این مسیر عمداً جدا از /api/storage/ عمومی است تا هر مشاور فقط بتواند رشته‌ی
+       گفتگوی خودش را بخواند/بنویسد، نه گفتگوی مشاوران دیگر با مدیر را. */
+    if (pathname === '/api/messages' && req.method === 'GET') {
+      const all = (await storeGet(MESSAGES_KEY)) || [];
+      const list = authed.acc.role === 'admin' ? all : all.filter(m => m.agentName === authed.acc.name);
+      return sendJson(res, 200, { messages: list });
+    }
+    if (pathname === '/api/messages' && req.method === 'POST') {
+      const body = await readBody(req);
+      const text = String(body.text || '').trim();
+      if (!text) return sendJson(res, 400, { error: 'empty_message' });
+      let agentName;
+      if (authed.acc.role === 'admin') {
+        agentName = String(body.toAgent || '').trim();
+        if (!agentName) return sendJson(res, 400, { error: 'missing_agent' });
+      } else {
+        agentName = authed.acc.name;
+      }
+      const all = (await storeGet(MESSAGES_KEY)) || [];
+      const msg = {
+        id: 'msg_' + crypto.randomBytes(8).toString('hex'),
+        agentName,
+        senderRole: authed.acc.role,
+        senderName: authed.acc.name,
+        text,
+        createdAt: new Date().toISOString(),
+        readByAdmin: authed.acc.role === 'admin',
+        readByAgent: authed.acc.role === 'agent',
+      };
+      all.push(msg);
+      await storeSet(MESSAGES_KEY, all);
+      return sendJson(res, 200, { message: msg });
+    }
+    if (pathname === '/api/messages/read' && req.method === 'POST') {
+      const body = await readBody(req);
+      const all = (await storeGet(MESSAGES_KEY)) || [];
+      let changed = false;
+      all.forEach(m => {
+        if (authed.acc.role === 'admin') {
+          if ((!body.agentName || m.agentName === body.agentName) && !m.readByAdmin) { m.readByAdmin = true; changed = true; }
+        } else if (m.agentName === authed.acc.name && !m.readByAgent) { m.readByAgent = true; changed = true; }
+      });
+      if (changed) await storeSet(MESSAGES_KEY, all);
+      return sendJson(res, 200, { ok: true });
+    }
+
     /* ---------- خلاصه‌ی سبک وضعیت داده‌ها (برای بررسی دوره‌ای سریع «چیزی عوض شده یا نه؟») ----------
        این مسیر به‌جای برگرداندن کل داده‌ها (که ممکن است شامل عکس‌های حجیم قرارداد باشد)،
        فقط تعداد آیتم‌ها و جدیدترین زمان ویرایش هر بخش را برمی‌گرداند. کلاینت هر چند ثانیه
@@ -337,7 +440,8 @@ const server = http.createServer(async (req, res) => {
     if (pathname === '/api/meta' && req.method === 'GET') {
       const arrayKeys = ['sl_files', 'sl_customers', 'sl_mosharekat_melk', 'sl_mosharekat_sazande_req',
         'sl_sazande_bank', 'sl_contracts_rent', 'sl_contracts_sale', 'sl_contracts_mosharekat',
-        'sl_contracts_other', 'sl_opportunities', 'sl_office_customers_v1', 'sl_office_files_v1'];
+        'sl_contracts_other', 'sl_opportunities', 'sl_office_customers_v1', 'sl_office_files_v1',
+        ATTENDANCE_KEY, ACTIVITY_KEY, MESSAGES_KEY];
       const out = {};
       for (const k of arrayKeys) {
         const list = await storeGet(k);
@@ -381,15 +485,69 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, { ok: true, item });
     }
 
+    /* ---------- ذخیره‌ی «تفاوت» به‌جای کل آرایه (رفع باگ گم‌شدن اطلاعات هنگام ذخیره‌ی هم‌زمان) ----------
+       قبلاً کلاینت با هر ذخیره، کل آرایه (مثلاً کل sl_files) را که در حافظه‌ی خودش داشت
+       به‌جای آرایه‌ی سرور می‌نشاند. اگر دو مشاور هم‌زمان (یا با فاصله‌ی چند ثانیه، به‌خاطر
+       کند بودن ذخیره‌ی قبلی) دو چیز متفاوت اضافه/ویرایش می‌کردند، هرکدام که آخر ذخیره
+       می‌شد، تغییرات آن‌یکی را که در نسخه‌ی محلی‌اش نبود، کامل پاک می‌کرد — همان باگِ
+       «فایلی که ثبت کرده بودم، چند ساعت بعد پریده بود».
+       این مسیر به‌جای «کل آرایه را جایگزین کن»، فقط عملیات مشخص (این‌ها را اضافه/ویرایش کن،
+       این شناسه‌ها را حذف کن) را روی آخرین نسخه‌ی معتبرِ سرور اعمال می‌کند — نه نسخه‌ی
+       قدیمی‌ای که کلاینت از قبل نزد خودش داشت — پس تغییرات هم‌زمان‌ِ بقیه هرگز رونویسی نمی‌شود. */
+    if (/^\/api\/storage\/[^/]+\/batch$/.test(pathname) && req.method === 'PATCH') {
+      const key = decodeURIComponent(pathname.split('/')[3]);
+      if (key === ACCOUNTS_KEY || key === SESSIONS_KEY || key === MESSAGES_KEY) return sendJson(res, 403, { error: 'forbidden_key' });
+      if (key === OFFICE_CUSTOMERS_KEY && authed.acc.role !== 'admin') return sendJson(res, 403, { error: 'forbidden' });
+      if (key === OFFICE_FILES_KEY && authed.acc.role !== 'admin') return sendJson(res, 403, { error: 'forbidden' });
+      const body = await readBody(req);
+      const added = Array.isArray(body.added) ? body.added : [];
+      const updated = Array.isArray(body.updated) ? body.updated : [];
+      const removedIds = Array.isArray(body.removedIds) ? body.removedIds : [];
+      // نکته: بین این خط (خواندن آخرین نسخه از cache) و ذخیره‌ی نهایی، هیچ await ای روی
+      // خودِ آرایه انجام نمی‌شود؛ پس چون Node تک‌رشته‌ای است، درخواست دیگری نمی‌تواند
+      // وسط این عملیات فاصله بیندازد و باعث تداخل شود (درست مثل مسیر امن status فایل).
+      let list = (await storeGet(key)) || [];
+      if (!Array.isArray(list)) list = [];
+      if (removedIds.length) {
+        const removeSet = new Set(removedIds);
+        list = list.filter(it => !removeSet.has(it && it.id));
+      }
+      updated.forEach(u => {
+        if (!u || !u.id) return;
+        const idx = list.findIndex(it => it && it.id === u.id);
+        if (idx !== -1) list[idx] = u; else list.push(u); // اگر پیدا نشد (مثلاً هم‌زمان توسط شخص دیگری حذف شده)، دوباره اضافه می‌شود تا ویرایش کاربر گم نشود
+      });
+      added.forEach(a => {
+        if (!a || !a.id) return;
+        const idx = list.findIndex(it => it && it.id === a.id);
+        if (idx !== -1) list[idx] = a; else list.push(a);
+      });
+      await storeSet(key, list);
+      return sendJson(res, 200, { ok: true, count: list.length });
+    }
+
+    /* ---------- ادغام (merge) به‌جای رونویسی کامل، برای کلیدهایی که آبجکت ساده هستند
+       (نه آرایه) مثل تنظیمات یا متادیتای بک‌آپ — همان دلیل امنیتی مسیر batch بالا ---------- */
+    if (/^\/api\/storage\/[^/]+\/merge$/.test(pathname) && req.method === 'PATCH') {
+      const key = decodeURIComponent(pathname.split('/')[3]);
+      if (key === ACCOUNTS_KEY || key === SESSIONS_KEY || key === MESSAGES_KEY) return sendJson(res, 403, { error: 'forbidden_key' });
+      const { patch } = await readBody(req);
+      const current = (await storeGet(key)) || {};
+      const merged = Object.assign({}, current, (patch && typeof patch === 'object') ? patch : {});
+      await storeSet(key, merged);
+      return sendJson(res, 200, { ok: true, value: merged });
+    }
+
     /* ---------- ذخیره‌سازی مشترک key-value (فایل‌ها، مشتریان، قراردادها، تنظیمات و ...) ---------- */
     if (pathname.startsWith('/api/storage/') && req.method === 'GET') {
       const key = decodeURIComponent(pathname.slice('/api/storage/'.length));
+      if (key === MESSAGES_KEY) return sendJson(res, 403, { error: 'forbidden_key' }); // فقط از /api/messages در دسترس است
       const value = await storeGet(key);
       return sendJson(res, 200, { value: value === undefined ? null : JSON.stringify(value) });
     }
     if (pathname.startsWith('/api/storage/') && req.method === 'PUT') {
       const key = decodeURIComponent(pathname.slice('/api/storage/'.length));
-      if (key === ACCOUNTS_KEY || key === SESSIONS_KEY) return sendJson(res, 403, { error: 'forbidden_key' });
+      if (key === ACCOUNTS_KEY || key === SESSIONS_KEY || key === MESSAGES_KEY) return sendJson(res, 403, { error: 'forbidden_key' });
       if (key === OFFICE_CUSTOMERS_KEY && authed.acc.role !== 'admin') return sendJson(res, 403, { error: 'forbidden' });
       if (key === OFFICE_FILES_KEY && authed.acc.role !== 'admin') return sendJson(res, 403, { error: 'forbidden' });
       const { value } = await readBody(req);

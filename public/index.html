@@ -413,10 +413,11 @@ const STORAGE_KEYS = {
   files:'sl_files', customers:'sl_customers', mMelk:'sl_mosharekat_melk', mSaz:'sl_mosharekat_sazande_req',
   sazBank:'sl_sazande_bank', cRent:'sl_contracts_rent', cSale:'sl_contracts_sale', cMosh:'sl_contracts_mosharekat',
   cOther:'sl_contracts_other', settings:'sl_settings', agentBackup:'sl_agent_backup_meta', accounts:'sl_accounts_v1',
-  opportunities:'sl_opportunities', officeCustomers:'sl_office_customers_v1', officeFiles:'sl_office_files_v1'
+  opportunities:'sl_opportunities', officeCustomers:'sl_office_customers_v1', officeFiles:'sl_office_files_v1',
+  attendance:'sl_attendance_v1', activityLogs:'sl_activity_v1'
 };
 
-let DB = { files:[], customers:[], mMelk:[], mSaz:[], sazBank:[], cRent:[], cSale:[], cMosh:[], cOther:[], settings:{ conversionRate:2.5, defaultFollowupDays:3 }, backupMeta:{}, accounts:[], opportunities:[], officeCustomers:[], officeFiles:[] };
+let DB = { files:[], customers:[], mMelk:[], mSaz:[], sazBank:[], cRent:[], cSale:[], cMosh:[], cOther:[], settings:{ conversionRate:2.5, defaultFollowupDays:3 }, backupMeta:{}, accounts:[], opportunities:[], officeCustomers:[], officeFiles:[], attendance:[], activityLogs:[], messages:[] };
 let SESSION = null; // {role:'admin'|'agent', name:'...'}
 let SERVER_HEALTH = { ok:false, backend:'file' };
 let UI = { page:'dashboard', tab:{}, search:{}, sort:{}, priceMin:{}, priceMax:{}, filterAgent:'' , sidebarOpen:false, view:{}};
@@ -592,13 +593,35 @@ async function storageSet(key, value){
   }catch(e){ console.error('storage set failed', key, e); toast('خطا در ذخیره‌سازی روی سرور'); return false; }
 }
 
+async function loadMessages(){
+  try{ const r = await apiFetch('/api/messages'); DB.messages = r.messages||[]; }catch(e){ /* بی‌صدا رد شو */ }
+}
+// نام مجموعه‌های «آرایه‌ای» (لیستی از آیتم‌ها با id یکتا) که ذخیره‌سازی‌شان از این پس
+// به‌صورت «تفاوت» (اضافه/ویرایش/حذف) انجام می‌شود، نه رونویسی کل آرایه.
+const ARRAY_COLLECTIONS = ['files','customers','mMelk','mSaz','sazBank','cRent','cSale','cMosh','cOther',
+  'opportunities','officeCustomers','officeFiles','attendance','activityLogs'];
+// آخرین نسخه‌ای از هر مجموعه که با سرور هماهنگ است (بلافاصله پس از بارگذاری یا ذخیره‌ی موفق
+// به‌روزرسانی می‌شود) — مبنای محاسبه‌ی «چه چیزی از آخرین‌بار تغییر کرده؟» در saveCollection.
+let __syncedSnapshot = {};
+let __syncedObjectSnapshot = {}; // برای کلیدهای آبجکتیِ ساده مثل settings و backupMeta
+function snapshotCollection(name){
+  __syncedSnapshot[name] = new Map((DB[name]||[]).filter(it=>it&&it.id).map(it=>[it.id, JSON.stringify(stripTransientFields(it))]));
+}
+// فیلدهای موقتِ فقط-کلاینتی (مثل __statusReq که برای مدیریت رقابت درخواست‌های وضعیت
+// استفاده می‌شود) نباید نه در محاسبه‌ی تفاوت دخیل باشند و نه هرگز به سرور فرستاده شوند.
+function stripTransientFields(item){
+  const out = {};
+  for(const k in item){ if(!k.startsWith('__')) out[k] = item[k]; }
+  return out;
+}
 async function loadAll(){
-  const [files, customers, mMelk, mSaz, sazBank, cRent, cSale, cMosh, cOther, settings, backupMeta, opportunities, officeCustomers, officeFiles] = await Promise.all([
+  const [files, customers, mMelk, mSaz, sazBank, cRent, cSale, cMosh, cOther, settings, backupMeta, opportunities, officeCustomers, officeFiles, attendance, activityLogs] = await Promise.all([
     storageGet(STORAGE_KEYS.files), storageGet(STORAGE_KEYS.customers), storageGet(STORAGE_KEYS.mMelk),
     storageGet(STORAGE_KEYS.mSaz), storageGet(STORAGE_KEYS.sazBank), storageGet(STORAGE_KEYS.cRent),
     storageGet(STORAGE_KEYS.cSale), storageGet(STORAGE_KEYS.cMosh), storageGet(STORAGE_KEYS.cOther),
     storageGet(STORAGE_KEYS.settings), storageGet(STORAGE_KEYS.agentBackup),
-    storageGet(STORAGE_KEYS.opportunities), storageGet(STORAGE_KEYS.officeCustomers), storageGet(STORAGE_KEYS.officeFiles)
+    storageGet(STORAGE_KEYS.opportunities), storageGet(STORAGE_KEYS.officeCustomers), storageGet(STORAGE_KEYS.officeFiles),
+    storageGet(STORAGE_KEYS.attendance), storageGet(STORAGE_KEYS.activityLogs)
   ]);
   DB.files=(files||[]).map(f=>{ if(!f.status) f.status='active'; return f; }); DB.customers=customers||[]; DB.mMelk=mMelk||[]; DB.mSaz=mSaz||[]; DB.sazBank=sazBank||[];
   DB.cRent=cRent||[]; DB.cSale=cSale||[]; DB.cMosh=cMosh||[]; DB.cOther=cOther||[];
@@ -606,20 +629,79 @@ async function loadAll(){
   DB.backupMeta=backupMeta||{};
   DB.opportunities=opportunities||[]; DB.officeCustomers=officeCustomers||[];
   DB.officeFiles=(officeFiles||[]).map(f=>{ if(!f.status) f.status='active'; return f; });
+  DB.attendance=attendance||[]; DB.activityLogs=activityLogs||[];
+  ARRAY_COLLECTIONS.forEach(snapshotCollection); // این لحظه، مبنای هماهنگ با سرور برای محاسبه‌ی تغییرات بعدی است
+  __syncedObjectSnapshot.settings = Object.assign({}, DB.settings);
+  __syncedObjectSnapshot.backupMeta = Object.assign({}, DB.backupMeta);
   // لیست حساب مشاوران فقط برای مدیر از API اختصاصی خوانده می‌شود
   if(SESSION && SESSION.role==='admin'){
     try{ const r = await apiFetch('/api/accounts'); DB.accounts = r.accounts||[]; }catch(e){ DB.accounts = DB.accounts||[]; }
   }
+  await loadMessages();
   try{ const h = await fetch(API_BASE+'/api/health'); SERVER_HEALTH = await h.json(); }catch(e){ /* بی‌صدا رد شو */ }
 }
+// رفع باگ «فایل ثبت‌شده بعد از مدتی پریده بود»: قبلاً اینجا کل DB[name] به‌جای آرایه‌ی
+// سرور نشانده می‌شد. اگر هم‌زمان (یا با فاصله‌ی چند ثانیه به‌خاطر کندی قبلی) یک مشاور
+// دیگر هم چیزی در همان مجموعه ثبت/ویرایش می‌کرد، هرکدام دیرتر ذخیره می‌شد، تغییرات
+// آن‌یکی را که در نسخه‌ی محلی‌اش نبود کامل پاک می‌کرد. الان به‌جای «کل آرایه»، فقط
+// «چه چیزی از آخرین هماهنگی تغییر کرده» (اضافه/ویرایش/حذف) به سرور فرستاده می‌شود؛
+// سرور هم این تغییرات را روی آخرین نسخه‌ی خودش اعمال می‌کند، نه نسخه‌ی قدیمیِ کلاینت —
+// پس تغییرات هم‌زمانِ بقیه هرگز رونویسی نمی‌شود.
 async function saveCollection(name){
   if(name==='accounts') return; // حساب‌ها از مسیر اختصاصی /api/accounts مدیریت می‌شوند، نه اینجا
   const map={ files:STORAGE_KEYS.files, customers:STORAGE_KEYS.customers, mMelk:STORAGE_KEYS.mMelk, mSaz:STORAGE_KEYS.mSaz,
     sazBank:STORAGE_KEYS.sazBank, cRent:STORAGE_KEYS.cRent, cSale:STORAGE_KEYS.cSale, cMosh:STORAGE_KEYS.cMosh,
     cOther:STORAGE_KEYS.cOther, settings:STORAGE_KEYS.settings, backupMeta:STORAGE_KEYS.agentBackup,
-    opportunities:STORAGE_KEYS.opportunities, officeCustomers:STORAGE_KEYS.officeCustomers, officeFiles:STORAGE_KEYS.officeFiles };
-  await storageSet(map[name], DB[name]);
+    opportunities:STORAGE_KEYS.opportunities, officeCustomers:STORAGE_KEYS.officeCustomers, officeFiles:STORAGE_KEYS.officeFiles,
+    attendance:STORAGE_KEYS.attendance, activityLogs:STORAGE_KEYS.activityLogs };
+  const key = map[name];
+  if(!ARRAY_COLLECTIONS.includes(name)){
+    // تنظیمات و متادیتای بک‌آپ: آبجکت ساده هستند (نه آرایه). به همان دلیل بالا، به‌جای
+    // رونویسی کل آبجکت، فقط کلیدهایی که واقعاً تغییر کرده‌اند merge می‌شوند.
+    const beforeObj = __syncedObjectSnapshot[name] || {};
+    const currentObj = DB[name] || {};
+    const patch = {};
+    Object.keys(currentObj).forEach(k=>{
+      if(JSON.stringify(currentObj[k]) !== JSON.stringify(beforeObj[k])) patch[k] = currentObj[k];
+    });
+    if(Object.keys(patch).length===0) return true;
+    try{
+      await apiFetch('/api/storage/'+encodeURIComponent(key)+'/merge', {method:'PATCH', body: JSON.stringify({patch})});
+      __syncedObjectSnapshot[name] = Object.assign({}, currentObj);
+      return true;
+    }catch(e){
+      console.error('merge save failed', key, e);
+      toast('خطا در ذخیره‌سازی روی سرور');
+      return false;
+    }
+  }
+  const before = __syncedSnapshot[name] || new Map();
+  const current = DB[name] || [];
+  const currentIds = new Set();
+  const added = [], updated = [];
+  current.forEach(item=>{
+    if(!item || !item.id) return;
+    currentIds.add(item.id);
+    const clean = stripTransientFields(item);
+    const prevJson = before.get(item.id);
+    const nowJson = JSON.stringify(clean);
+    if(prevJson===undefined) added.push(clean);
+    else if(prevJson!==nowJson) updated.push(clean);
+  });
+  const removedIds = [];
+  before.forEach((_, id)=>{ if(!currentIds.has(id)) removedIds.push(id); });
+  if(!added.length && !updated.length && !removedIds.length) return true; // چیزی تغییر نکرده، نیازی به درخواست نیست
+  try{
+    await apiFetch('/api/storage/'+encodeURIComponent(key)+'/batch', {method:'PATCH', body: JSON.stringify({added, updated, removedIds})});
+    snapshotCollection(name);
+    return true;
+  }catch(e){
+    console.error('batch save failed', key, e);
+    toast('خطا در ذخیره‌سازی روی سرور');
+    return false;
+  }
 }
+
 
 /* ---------- به‌روزرسانی زنده: هر چند ثانیه یک درخواست سبک می‌فرستیم که فقط می‌گوید
    «چیزی عوض شده یا نه» (بدون دانلود کل داده‌ها، از جمله عکس‌های حجیم قرارداد)؛ فقط
@@ -628,6 +710,7 @@ async function saveCollection(name){
    و هم چون رندر کامل صفحه خیلی کمتر اتفاق می‌افتد، احتمال قطع‌شدن یک کلیک وسط
    بازسازی صفحه (باگ «روی چیزی کلیک می‌شود ولی عمل نمی‌کند») هم خیلی کمتر می‌شود. ---------- */
 let __lastMetaSnapshot = '';
+let __lastUnreadChat = null; // null یعنی هنوز مقداردهی اولیه نشده (برای جلوگیری از نوتیف اشتباه در اولین ورود)
 async function pollForUpdates(){
   if(!SESSION) return;
   if(document.getElementById('overlay-root').classList.contains('show')) return; // وقتی فرمی باز است مزاحم نشو
@@ -638,6 +721,11 @@ async function pollForUpdates(){
     if(snap===__lastMetaSnapshot) return; // هیچ چیزی عوض نشده — نیازی به دانلود کامل و رندر مجدد نیست
     __lastMetaSnapshot = snap;
     await loadAll();
+    const newUnread = unreadChatCount();
+    if(__lastUnreadChat!==null && newUnread>__lastUnreadChat){
+      toast('📩 پیام جدید در گفتگو دریافت شد');
+    }
+    __lastUnreadChat = newUnread;
     renderApp();
   }catch(e){ /* بی‌صدا رد شو، دفعه بعد دوباره تلاش می‌کند */ }
 }
@@ -700,6 +788,7 @@ function fileFields(dealType, propType){
       f.push({key:'convertible', label:'قابلیت تبدیل رهن به اجاره', type:'checkbox'});
       f.push({key:'convertAmount', label:'مبلغ رهن قابل تبدیل (تومان)', type:'number', showIf:d=>d.convertible, price:true});
       f.push({key:'convertRate', label:'نرخ تبدیل (٪ ماهانه)', type:'number', showIf:d=>d.convertible});
+      f.push({key:'vacateDate', label:'تاریخ تخلیه', type:'date'});
     }
     f.push({key:'description', label:'توضیحات تکمیلی', type:'textarea', span:'full'});
     return f;
@@ -738,6 +827,7 @@ function fileFields(dealType, propType){
     f.push({key:'convertible', label:'قابلیت تبدیل رهن به اجاره', type:'checkbox'});
     f.push({key:'convertAmount', label:'مبلغ رهن قابل تبدیل (تومان)', type:'number', showIf:d=>d.convertible, price:true});
     f.push({key:'convertRate', label:'نرخ تبدیل (٪ ماهانه)', type:'number', showIf:d=>d.convertible});
+    f.push({key:'vacateDate', label:'تاریخ تخلیه', type:'date'});
   }
   if(propType==='presale'){
     f.push({key:'__presale_sep', label:'مشخصات پیش‌فروش', type:'section'});
@@ -761,6 +851,7 @@ function customerFields(dealType, propType){
   } else {
     f.push({key:'budgetRahn', label:'بودجه رهن (تومان)', type:'number', required:true, price:true});
     f.push({key:'budgetEjare', label:'بودجه اجاره ماهیانه (تومان)', type:'number', required:true, price:true});
+    f.push({key:'vacateDate', label:'تاریخ تخلیه (نیاز به ملک از)', type:'date'});
   }
   f.push({key:'areaWanted', label:'متراژ مورد نظر', type:'number'});
   f.push({key:'bedroomsWanted', label:'تعداد خواب مورد نظر', type:'number'});
@@ -896,7 +987,7 @@ function inputHtml(f, val){
     const shown = (v!==''&&v!==undefined&&v!==null) ? toFa(v) : '';
     return `<div class="field ${f.span==='full'?'full':''}"><label>${esc(f.label)}${f.required?' *':''}</label><input data-key="${f.key}" data-price="1" type="text" inputmode="numeric" placeholder="مثال: 9,600,000" value="${esc(shown)}"><div class="price-live" data-live="${f.key}" style="font-size:11px;color:var(--gold);margin-top:5px;line-height:1.7;min-height:14px"></div></div>`;
   }
-  const type = f.type==='number'?'number':(f.type==='tel'?'tel':(f.type==='date'?'date':'text'));
+  const type = f.type==='number'?'number':(f.type==='tel'?'tel':(f.type==='date'?'date':(f.type==='time'?'time':'text')));
   return `<div class="field ${f.span==='full'?'full':''}"><label>${esc(f.label)}${f.required?' *':''}</label><input data-key="${f.key}" type="${type}" value="${esc(v)}"></div>`;
 }
 
@@ -1034,6 +1125,7 @@ function fileCopyText(item, opts){
       lines.push(`(${numberToWordsFa(item.totalPrice)})`);
     } else {
       lines.push(`💰 رهن: ${toFa(item.rahnPrice)} تومان — اجاره: ${toFa(item.ejarePrice)} تومان/ماه`);
+      if(item.vacateDate) lines.push(`🗓 تاریخ تخلیه: ${faDate(item.vacateDate)}`);
     }
     if(item.description) lines.push(`📝 توضیحات: ${item.description}`);
     lines.push(ownerLine);
@@ -1056,6 +1148,7 @@ function fileCopyText(item, opts){
     if(item.documentStatus) lines.push(`📄 سند: ${item.documentStatus}${item.documentNotes?' — '+item.documentNotes:''}`);
   } else {
     lines.push(`💰 رهن: ${toFa(item.rahnPrice)} تومان — اجاره: ${toFa(item.ejarePrice)} تومان/ماه`);
+    if(item.vacateDate) lines.push(`🗓 تاریخ تخلیه: ${faDate(item.vacateDate)}`);
   }
   if(item.propType==='presale'){
     lines.push(`🏗 مرحله ساخت: ${item.constructionStage||'-'} | زمان تحویل: ${item.deliveryTime||'-'}`);
@@ -1072,6 +1165,7 @@ function customerCopyText(item){
   lines.push(`نام: ${item.name||'-'} | تماس: ${item.phone||'-'}`);
   if(item.dealType==='buy') lines.push(`💰 بودجه: ${toFa(item.budgetMin)} تا ${toFa(item.budgetMax)} تومان`);
   else lines.push(`💰 بودجه رهن: ${toFa(item.budgetRahn)} — اجاره: ${toFa(item.budgetEjare)} تومان`);
+  if(item.dealType==='rent' && item.vacateDate) lines.push(`🗓 تاریخ تخلیه: ${faDate(item.vacateDate)}`);
   if(item.areaWanted) lines.push(`📐 متراژ مورد نظر: ${toFa(item.areaWanted)} متر`);
   if(item.description) lines.push(`📝 توضیحات: ${item.description}`);
   lines.push(`— دفتر املاک اسپرلوس —`);
@@ -1159,6 +1253,7 @@ function fileCardHtml(item, opts){
       ${item.paymentSchedule?`<br>💳 رویه پرداخت: ${esc(item.paymentSchedule)}`:''}
     </div>` : '';
   const docNotesHtml = ((item.dealType==='sale' || item.propType==='garden') && item.documentStatus==='ندارد' && item.documentNotes) ? `<div class="desc-box">📄 توضیحات سند: ${esc(item.documentNotes)}</div>` : '';
+  const vacateHtml = (item.dealType==='rent' && item.vacateDate) ? `<div class="meta-line" style="margin-top:2px"><span>🗓 تاریخ تخلیه: ${faDate(item.vacateDate)}</span></div>` : '';
   const stMeta = fileStatusMeta(item);
   return `
   <div class="card" data-id="${item.id}">
@@ -1175,6 +1270,7 @@ function fileCardHtml(item, opts){
     <div class="desc-box">📍 ${esc(item.address||'-')}</div>
     <div class="kv">${kvHtml}</div>
     ${filePriceBoxHtml(item)}
+    ${vacateHtml}
     ${presaleHtml}
     ${docNotesHtml}
     ${item.description?`<div class="desc-box">📝 ${esc(item.description)}</div>`:''}
@@ -1214,6 +1310,7 @@ function customerCardHtml(item, opts){
       <div><span class="k">خواب</span><span class="v">${item.bedroomsWanted||'-'}</span></div>
     </div>
     <div class="price-box"><div class="main-price">بودجه: ${budget}</div></div>
+    ${(item.dealType==='rent' && item.vacateDate) ? `<div class="meta-line" style="margin-top:2px"><span>🗓 تاریخ تخلیه: ${faDate(item.vacateDate)}</span></div>` : ''}
     ${item.description?`<div class="desc-box">📝 ${esc(item.description)}</div>`:''}
     <div class="alarm-item ${overdue?'urgent':''}" style="margin-top:8px;padding:8px 10px;">
       <span style="font-size:12px">⏰ پیگیری هر ${item.followupDays||DB.settings.defaultFollowupDays||3} روز | آخرین تماس: ${faDate(item.lastContact)}${overdue?' — <b>زمان تماس فرارسیده!</b>':''}</span>
@@ -1509,6 +1606,232 @@ function computeMatches(dealCategory){
 function computeOfficeCustomerMatches(dealCategory){
   return computeMatchesGeneric(dealCategory, DB.officeCustomers, DB.files);
 }
+
+/* =========================================================================
+   ثبت روزانه‌ی ساعت ورود و خروج مشاوران
+   ========================================================================= */
+function todayStr(){ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
+function attendanceFields(){
+  return [
+    {key:'date', label:'تاریخ', type:'date', required:true},
+    {key:'checkIn', label:'ساعت ورود', type:'time'},
+    {key:'checkOut', label:'ساعت خروج', type:'time'},
+    {key:'notes', label:'توضیحات', type:'textarea', span:'full'},
+  ];
+}
+function addAttendance(){
+  openFormModal('ثبت تردد روزانه', attendanceFields(), {date: todayStr()}, async (data)=>{
+    data.id=uid(); data.agentName=SESSION.name; data.createdAt=nowIso(); data.updatedAt=nowIso();
+    DB.attendance.push(data);
+    await saveCollection('attendance');
+    toast('تردد ثبت شد ✓');
+    renderApp();
+  });
+}
+function editAttendance(id){
+  const item = DB.attendance.find(x=>x.id===id); if(!item || item.agentName!==SESSION.name) return;
+  openFormModal('ویرایش تردد', attendanceFields(), item, async (data)=>{
+    Object.assign(item, data); item.updatedAt=nowIso();
+    await saveCollection('attendance');
+    toast('ذخیره شد ✓');
+    renderApp();
+  });
+}
+function deleteAttendance(id){
+  const item = DB.attendance.find(x=>x.id===id); if(!item || item.agentName!==SESSION.name) return;
+  if(!confirm('این رکورد تردد حذف شود؟')) return;
+  DB.attendance = DB.attendance.filter(x=>x.id!==id);
+  saveCollection('attendance'); renderApp();
+}
+function pageAttendance(){
+  const isAdmin = SESSION.role==='admin';
+  const agents = agentRosterForPerformance().sort((a,b)=>a.localeCompare(b,'fa'));
+  const filterAgent = isAdmin ? (UI.filterAgent||'') : SESSION.name;
+  let list = DB.attendance.filter(a=> isAdmin? (!filterAgent || a.agentName===filterAgent) : a.agentName===SESSION.name);
+  list = list.slice().sort((a,b)=> (b.date||'').localeCompare(a.date||'') || new Date(b.createdAt)-new Date(a.createdAt));
+  return `
+  ${!isAdmin? `<div style="margin-bottom:12px"><button class="btn btn-primary btn-sm" onclick="addAttendance()">+ ثبت ورود/خروج امروز</button></div>` : `
+  <div class="toolbar" style="margin-bottom:12px">
+    <select onchange="UI.filterAgent=this.value; renderApp();" style="padding:9px 12px;border:1px solid var(--line);border-radius:9px;background:var(--paper)">
+      <option value="">همه مشاوران</option>
+      ${agents.map(a=>`<option value="${esc(a)}" ${filterAgent===a?'selected':''}>${esc(a)}</option>`).join('')}
+    </select>
+  </div>`}
+  <div class="table-wrap"><table><thead><tr><th>مشاور</th><th>تاریخ</th><th>ورود</th><th>خروج</th><th>توضیحات</th>${isAdmin?'':'<th></th>'}</tr></thead><tbody>
+  ${list.length===0? `<tr><td colspan="6" style="text-align:center;padding:20px">رکوردی ثبت نشده است</td></tr>` :
+  list.map(a=>`<tr>
+    <td>${esc(a.agentName)}</td><td>${faDate(a.date)}</td><td>${esc(a.checkIn||'-')}</td><td>${esc(a.checkOut||'-')}</td><td>${esc(a.notes||'-')}</td>
+    ${isAdmin?'':`<td style="white-space:nowrap"><button class="btn btn-outline btn-sm" onclick="editAttendance('${a.id}')">✏️</button> <button class="btn btn-danger btn-sm" onclick="deleteAttendance('${a.id}')">🗑</button></td>`}
+  </tr>`).join('')}
+  </tbody></table></div>`;
+}
+
+/* =========================================================================
+   ثبت روزانه‌ی فعالیت مشاوران: تعداد تماس، تعداد بازدید، آگهی دیوار
+   ========================================================================= */
+function activityFields(includeAgent, agents){
+  const f=[];
+  if(includeAgent) f.push({key:'agentName', label:'مشاور', type:'select', options:agents, required:true});
+  f.push({key:'date', label:'تاریخ', type:'date', required:true});
+  f.push({key:'calls', label:'تعداد تماس گرفته‌شده', type:'number'});
+  f.push({key:'viewings', label:'تعداد بازدید', type:'number'});
+  f.push({key:'divarAds', label:'تعداد آگهی دیوار', type:'number'});
+  f.push({key:'notes', label:'توضیحات', type:'textarea', span:'full'});
+  return f;
+}
+function addActivityLog(){
+  const isAdmin = SESSION.role==='admin';
+  const agents = agentRosterForPerformance().sort((a,b)=>a.localeCompare(b,'fa'));
+  openFormModal('ثبت فعالیت روزانه', activityFields(isAdmin, agents), {date: todayStr()}, async (data)=>{
+    data.id=uid();
+    data.agentName = isAdmin ? data.agentName : SESSION.name;
+    if(!data.agentName){ toast('مشاور را انتخاب کنید'); return; }
+    data.createdAt=nowIso(); data.updatedAt=nowIso();
+    DB.activityLogs.push(data);
+    await saveCollection('activityLogs');
+    toast('فعالیت ثبت شد ✓');
+    renderApp();
+  });
+}
+function editActivityLog(id){
+  const item = DB.activityLogs.find(x=>x.id===id); if(!item) return;
+  const isAdmin = SESSION.role==='admin';
+  if(!isAdmin && item.agentName!==SESSION.name) return;
+  const agents = agentRosterForPerformance().sort((a,b)=>a.localeCompare(b,'fa'));
+  openFormModal('ویرایش فعالیت', activityFields(isAdmin, agents), item, async (data)=>{
+    Object.assign(item, data);
+    if(!isAdmin) item.agentName = SESSION.name;
+    item.updatedAt = nowIso();
+    await saveCollection('activityLogs');
+    toast('ذخیره شد ✓');
+    renderApp();
+  });
+}
+function deleteActivityLog(id){
+  const item = DB.activityLogs.find(x=>x.id===id); if(!item) return;
+  if(SESSION.role!=='admin' && item.agentName!==SESSION.name) return;
+  if(!confirm('این رکورد فعالیت حذف شود؟')) return;
+  DB.activityLogs = DB.activityLogs.filter(x=>x.id!==id);
+  saveCollection('activityLogs'); renderApp();
+}
+function pageActivityLog(){
+  const isAdmin = SESSION.role==='admin';
+  const agents = agentRosterForPerformance().sort((a,b)=>a.localeCompare(b,'fa'));
+  const filterAgent = isAdmin ? (UI.filterAgent||'') : SESSION.name;
+  let list = DB.activityLogs.filter(a=> isAdmin? (!filterAgent || a.agentName===filterAgent) : a.agentName===SESSION.name);
+  list = list.slice().sort((a,b)=> (b.date||'').localeCompare(a.date||''));
+  const totalCalls = list.reduce((s,x)=>s+Number(x.calls||0),0);
+  const totalViewings = list.reduce((s,x)=>s+Number(x.viewings||0),0);
+  const totalDivar = list.reduce((s,x)=>s+Number(x.divarAds||0),0);
+  return `
+  <div class="stat-grid">
+    <div class="stat-card"><div class="n">${toFa(totalCalls)}</div><div class="l">جمع تماس‌ها</div></div>
+    <div class="stat-card"><div class="n">${toFa(totalViewings)}</div><div class="l">جمع بازدیدها</div></div>
+    <div class="stat-card"><div class="n">${toFa(totalDivar)}</div><div class="l">جمع آگهی‌های دیوار</div></div>
+  </div>
+  <div style="margin-bottom:12px;display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+    <button class="btn btn-primary btn-sm" onclick="addActivityLog()">+ ثبت فعالیت</button>
+    ${isAdmin? `<select onchange="UI.filterAgent=this.value; renderApp();" style="padding:9px 12px;border:1px solid var(--line);border-radius:9px;background:var(--paper)">
+      <option value="">همه مشاوران</option>
+      ${agents.map(a=>`<option value="${esc(a)}" ${filterAgent===a?'selected':''}>${esc(a)}</option>`).join('')}
+    </select>`:''}
+  </div>
+  <div class="table-wrap"><table><thead><tr><th>مشاور</th><th>تاریخ</th><th>تماس</th><th>بازدید</th><th>آگهی دیوار</th><th>توضیحات</th><th></th></tr></thead><tbody>
+  ${list.length===0? `<tr><td colspan="7" style="text-align:center;padding:20px">فعالیتی ثبت نشده است</td></tr>` :
+  list.map(a=>`<tr>
+    <td>${esc(a.agentName)}</td><td>${faDate(a.date)}</td><td>${toFa(a.calls||0)}</td><td>${toFa(a.viewings||0)}</td><td>${toFa(a.divarAds||0)}</td><td>${esc(a.notes||'-')}</td>
+    <td style="white-space:nowrap">${(isAdmin || a.agentName===SESSION.name)? `<button class="btn btn-outline btn-sm" onclick="editActivityLog('${a.id}')">✏️</button> <button class="btn btn-danger btn-sm" onclick="deleteActivityLog('${a.id}')">🗑</button>`:''}</td>
+  </tr>`).join('')}
+  </tbody></table></div>`;
+}
+
+/* =========================================================================
+   گفتگوی داخلی (چت): مدیر ⇄ مشاوران، با نوتیف پیام جدید
+   ========================================================================= */
+function unreadChatCount(agentName){
+  if(!SESSION) return 0;
+  if(SESSION.role==='admin'){
+    return DB.messages.filter(m=> (!agentName || m.agentName===agentName) && !m.readByAdmin).length;
+  }
+  return DB.messages.filter(m=> m.agentName===SESSION.name && !m.readByAgent).length;
+}
+async function markChatRead(agentName){
+  try{
+    await apiFetch('/api/messages/read', {method:'POST', body: JSON.stringify(SESSION.role==='admin'?{agentName}:{})});
+  }catch(e){ /* بی‌صدا رد شو */ }
+  DB.messages.forEach(m=>{
+    if(SESSION.role==='admin'){ if(!agentName || m.agentName===agentName) m.readByAdmin=true; }
+    else if(m.agentName===SESSION.name) m.readByAgent=true;
+  });
+}
+async function sendChatMessage(toAgent, text){
+  text = (text||'').trim();
+  if(!text) return;
+  try{
+    const body = SESSION.role==='admin' ? {text, toAgent} : {text};
+    const r = await apiFetch('/api/messages', {method:'POST', body: JSON.stringify(body)});
+    if(r && r.message) DB.messages.push(r.message);
+    __lastUnreadChat = unreadChatCount();
+    renderApp();
+  }catch(e){ toast('ارسال پیام ناموفق بود'); }
+}
+function chatBubbleHtml(m, mineRole){
+  const mine = m.senderRole===mineRole;
+  return `<div style="align-self:${mine?'flex-end':'flex-start'};max-width:80%;background:${mine?'var(--gold)':'var(--card,#fff)'};color:${mine?'#1a1a1a':'inherit'};padding:8px 12px;border-radius:12px;border:1px solid var(--line)">
+    <div style="font-size:11px;opacity:.7;margin-bottom:3px">${m.senderRole==='admin'?'مدیریت':esc(m.senderName)} — ${faDateTime(m.createdAt)}</div>
+    <div style="white-space:pre-wrap">${esc(m.text)}</div>
+  </div>`;
+}
+function submitChatFromInput(){
+  const el = document.getElementById('chat-input');
+  if(!el) return;
+  const text = el.value;
+  if(!text.trim()) return;
+  const toAgent = SESSION.role==='admin' ? UI.tab.chatAgent : null;
+  el.value='';
+  sendChatMessage(toAgent, text);
+}
+function chatInputHtml(placeholder){
+  return `<div style="display:flex;gap:8px">
+    <textarea id="chat-input" rows="2" placeholder="${esc(placeholder)}" style="flex:1" onkeydown="if(event.key==='Enter' && !event.shiftKey){ event.preventDefault(); submitChatFromInput(); }"></textarea>
+    <button class="btn btn-primary" onclick="submitChatFromInput()">ارسال</button>
+  </div>`;
+}
+function pageChatAgent(){
+  const thread = DB.messages.filter(m=>m.agentName===SESSION.name).sort((a,b)=>new Date(a.createdAt)-new Date(b.createdAt));
+  markChatRead();
+  return `
+  <div class="chat-box" id="chat-box" style="display:flex;flex-direction:column;gap:8px;max-height:60vh;overflow-y:auto;padding:10px;background:var(--paper);border-radius:12px;margin-bottom:12px">
+    ${thread.length===0? `<div class="empty-state"><div class="ic">💬</div>هنوز پیامی رد و بدل نشده است</div>` : thread.map(m=>chatBubbleHtml(m,'agent')).join('')}
+  </div>
+  ${chatInputHtml('پیام خود را به مدیریت بنویسید...')}`;
+}
+function pageChatAdmin(){
+  const agents = agentRosterForPerformance().sort((a,b)=>a.localeCompare(b,'fa'));
+  const selected = (UI.tab.chatAgent && agents.includes(UI.tab.chatAgent)) ? UI.tab.chatAgent : (agents[0]||'');
+  UI.tab.chatAgent = selected;
+  const threadListHtml = agents.map(a=>{
+    const unread = unreadChatCount(a);
+    return `<div class="nav-item ${selected===a?'active':''}" style="cursor:pointer;display:flex;justify-content:space-between;align-items:center" onclick="UI.tab.chatAgent='${esc(a)}'; renderApp();">
+      <span>${esc(a)}</span>
+      ${unread? `<span class="badge badge-danger" style="font-size:10px">${toFa(unread)}</span>`: ''}
+    </div>`;
+  }).join('');
+  const thread = selected ? DB.messages.filter(m=>m.agentName===selected).sort((a,b)=>new Date(a.createdAt)-new Date(b.createdAt)) : [];
+  if(selected) markChatRead(selected);
+  return `
+  <div style="display:flex;gap:14px;flex-wrap:wrap">
+    <div style="min-width:180px;flex:0 0 200px">${threadListHtml || '<div class="empty-state">مشاوری یافت نشد</div>'}</div>
+    <div style="flex:1;min-width:260px">
+      ${selected? `
+      <div class="chat-box" id="chat-box" style="display:flex;flex-direction:column;gap:8px;max-height:55vh;overflow-y:auto;padding:10px;background:var(--paper);border-radius:12px;margin-bottom:12px">
+        ${thread.length===0? `<div class="empty-state"><div class="ic">💬</div>هنوز پیامی رد و بدل نشده است</div>` : thread.map(m=>chatBubbleHtml(m,'admin')).join('')}
+      </div>
+      ${chatInputHtml('پیام به '+selected+'...')}` : ''}
+    </div>
+  </div>`;
+}
+
 /* =========================================================================
    بک‌آپ گیری (هر ۲۴ ساعت)
    ========================================================================= */
@@ -1717,6 +2040,8 @@ function matchGroupHtml(group, kind){
 function pageMatching(){
   const cat = UI.tab.matching || 'rent';
   UI.tab.matching = cat;
+  const section = UI.tab.matchingSection || '1';
+  UI.tab.matchingSection = section;
   const isAdmin = SESSION.role==='admin';
 
   // ۱) مطابقت مشتری هر مشاور با فایل‌های همه‌ی مشاوران + فایل‌های دفتر، همه در یک کادر
@@ -1733,18 +2058,36 @@ function pageMatching(){
   const countRent = stdRent.length + officeCustRent.length;
   const countSale = stdSale.length + officeCustSale.length;
 
-  const std = cat==='rent'? stdRent : stdSale;
-  const officeCustResults = cat==='rent'? officeCustRent : officeCustSale;
-  const total = std.length + officeCustResults.length;
+  let std = cat==='rent'? stdRent : stdSale;
+  let officeCustResults = cat==='rent'? officeCustRent : officeCustSale;
+  const section1CountForCat = std.length, section2CountForCat = officeCustResults.length;
+
+  // جستجو بر اساس نام مشتری — هم روی بخش «مشتری × فایل‌ها» و هم روی بخش «مشتریان دفتر»
+  const searchId = 'tb-search-matching';
+  const q = (UI.search.matching||'').trim().toLowerCase();
+  if(q){
+    std = std.filter(r=> String(r.customer.name||'').toLowerCase().includes(q));
+    officeCustResults = officeCustResults.filter(r=> String(r.customer.name||'').toLowerCase().includes(q));
+  }
+
+  const shown = section==='2' ? officeCustResults : std;
+  const shownKind = section==='2' ? 'officeCustomers' : 'std';
+  const shownTitle = section==='2' ? '🏢 مطابقت مشتریان دفتر با فایل‌های شما' : '🔍 مطابقت مشتریان با فایل‌ها (خودِ مشاور، دفتر و سایر مشاوران)';
 
   return `
   <div class="tabs">
     <button class="tab-btn ${cat==='rent'?'active':''}" onclick="UI.tab.matching='rent';renderApp();">رهن و اجاره <span class="tab-count">${toFa(countRent)}</span></button>
     <button class="tab-btn ${cat==='sale'?'active':''}" onclick="UI.tab.matching='sale';renderApp();">خرید و فروش <span class="tab-count">${toFa(countSale)}</span></button>
   </div>
-  ${total===0? `<div class="empty-state"><div class="ic">🔍</div>در حال حاضر تطبیقی با شباهت قیمت حداقل ۸۰٪ یافت نشد</div>` : ''}
-  ${std.length? `<div class="section-title">🔍 مطابقت مشتریان با فایل‌ها (خودِ مشاور، دفتر و سایر مشاوران)</div>${std.map(r=>matchGroupHtml(r,'std')).join('')}` : ''}
-  ${officeCustResults.length? `<div class="section-title">🏢 مطابقت مشتریان دفتر با فایل‌های شما</div>${officeCustResults.map(r=>matchGroupHtml(r,'officeCustomers')).join('')}` : ''}
+  <div class="tabs">
+    <button class="tab-btn ${section==='1'?'active':''}" onclick="UI.tab.matchingSection='1';renderApp();">۱) مشتری با فایل‌ها <span class="tab-count">${toFa(section1CountForCat)}</span></button>
+    <button class="tab-btn ${section==='2'?'active':''}" onclick="UI.tab.matchingSection='2';renderApp();">۲) مشتریان دفتر با فایل‌های شما <span class="tab-count">${toFa(section2CountForCat)}</span></button>
+  </div>
+  <div class="toolbar">
+    <input id="${searchId}" type="text" class="grow" placeholder="جستجو بر اساس نام مشتری" value="${esc(UI.search.matching||'')}" oninput="UI.search.matching=this.value; refocusAfterRender('${searchId}');">
+  </div>
+  ${shown.length===0? `<div class="empty-state"><div class="ic">🔍</div>${q? 'با این نام مطابقتی یافت نشد' : 'در حال حاضر تطبیقی با شباهت قیمت حداقل ۸۰٪ یافت نشد'}</div>` :
+    `<div class="section-title">${shownTitle}</div>${shown.map(r=>matchGroupHtml(r,shownKind)).join('')}`}
   `;
 }
 
@@ -2147,6 +2490,7 @@ function pageAdminDashboard(){
    ========================================================================= */
 function agentPerformancePeriodStart(period){
   const now = new Date();
+  if(period==='today'){ return addDays(now.toISOString(), -1); } // ۱ روز اخیر (۲۴ ساعت گذشته)، هم‌الگو با last30/last90
   if(period==='month'){ return new Date(now.getFullYear(), now.getMonth(), 1).toISOString(); }
   if(period==='last30'){ return addDays(now.toISOString(), -30); }
   if(period==='last90'){ return addDays(now.toISOString(), -90); }
@@ -2187,6 +2531,11 @@ function computeAgentPerformance(agentName, periodStartIso){
   const mSaz = DB.mSaz.filter(x=>x.agentName===agentName && inPeriod(x.createdAt));
   const sazBank = DB.sazBank.filter(x=>x.agentName===agentName && inPeriod(x.createdAt));
 
+  const activity = DB.activityLogs.filter(a=>a.agentName===agentName && inPeriod(a.date||a.createdAt));
+  const totalCalls = activity.reduce((s,a)=>s+Number(a.calls||0),0);
+  const totalViewings = activity.reduce((s,a)=>s+Number(a.viewings||0),0);
+  const totalDivarAds = activity.reduce((s,a)=>s+Number(a.divarAds||0),0);
+
   const allDates = [...files, ...customers, ...opportunities, ...commissionable, ...cOther]
     .map(x=>x.updatedAt||x.createdAt).filter(Boolean).sort((a,b)=>new Date(b)-new Date(a));
   const lastActivity = allDates[0] || null;
@@ -2205,6 +2554,7 @@ function computeAgentPerformance(agentName, periodStartIso){
     customers, custRent, custBuy, opportunities, overdueOpp,
     cRent, cSale, cMosh, cOther, totalContracts, totalCommission, agentShare, officeShare, teaBoy,
     mMelk, mSaz, sazBank, lastActivity, idleDays, registeredTotal, conversionRate, avgDaysToClose,
+    activity, totalCalls, totalViewings, totalDivarAds,
     lastBackup: DB.backupMeta[agentName] || null,
   };
 }
@@ -2257,6 +2607,13 @@ function agentPerformanceCardHtml(p, rank){
       ${perfMiniStat('پیگیری عقب‌افتاده', toFa(p.overdueOpp.length), {color: p.overdueOpp.length? 'var(--danger)':'var(--ink)'})}
     </div>
 
+    <div class="section-title" style="margin:14px 0 8px;font-size:13px">📞 فعالیت روزانه (تماس/بازدید/آگهی)</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(90px,1fr));gap:8px">
+      ${perfMiniStat('تماس گرفته‌شده', toFa(p.totalCalls))}
+      ${perfMiniStat('بازدید', toFa(p.totalViewings))}
+      ${perfMiniStat('آگهی دیوار', toFa(p.totalDivarAds))}
+    </div>
+
     <div class="section-title" style="margin:14px 0 8px;font-size:13px">📄 قراردادها (${toFa(p.totalContracts)})</div>
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(90px,1fr));gap:8px">
       ${perfMiniStat('اجاره', toFa(p.cRent.length))}
@@ -2290,13 +2647,16 @@ function pageAgentPerformance(){
   const officeCustomers = allPerf.reduce((s,p)=>s+p.customers.length,0);
   const officeContracts = allPerf.reduce((s,p)=>s+p.totalContracts,0);
   const officeCommission = allPerf.reduce((s,p)=>s+p.totalCommission,0);
+  const officeCalls = allPerf.reduce((s,p)=>s+p.totalCalls,0);
+  const officeViewings = allPerf.reduce((s,p)=>s+p.totalViewings,0);
+  const officeDivarAds = allPerf.reduce((s,p)=>s+p.totalDivarAds,0);
 
   const ranked = allPerf.slice().sort((a,b)=>b.totalCommission-a.totalCommission);
   const maxCommission = Math.max(1, ...ranked.map(p=>p.totalCommission));
 
   const shownList = selectedAgent ? allPerf.filter(p=>p.agentName===selectedAgent) : ranked;
 
-  const periodTabs = [['all','همه‌ی زمان‌ها'],['month','از ابتدای این ماه'],['last30','۳۰ روز اخیر'],['last90','۹۰ روز اخیر']];
+  const periodTabs = [['all','همه‌ی زمان‌ها'],['month','از ابتدای این ماه'],['last30','۳۰ روز اخیر'],['last90','۹۰ روز اخیر'],['today','۱ روز اخیر']];
 
   return `
   <div class="tabs">
@@ -2314,6 +2674,9 @@ function pageAgentPerformance(){
     <div class="stat-card"><div class="n">${toFa(officeCustomers)}</div><div class="l">مشتری ثبت‌شده در بازه</div></div>
     <div class="stat-card"><div class="n">${toFa(officeContracts)}</div><div class="l">قرارداد در بازه</div></div>
     <div class="stat-card"><div class="n">${toFa(officeCommission)}</div><div class="l">جمع کمیسیون بازه (تومان)</div></div>
+    <div class="stat-card"><div class="n">${toFa(officeCalls)}</div><div class="l">تماس در بازه</div></div>
+    <div class="stat-card"><div class="n">${toFa(officeViewings)}</div><div class="l">بازدید در بازه</div></div>
+    <div class="stat-card"><div class="n">${toFa(officeDivarAds)}</div><div class="l">آگهی دیوار در بازه</div></div>
   </div>
 
   ${!selectedAgent? `
@@ -2532,6 +2895,9 @@ const AGENT_NAV = [
   {id:'sazbank', label:'بانک سازنده', ic:'👷'},
   {id:'office_customers', label:'مشتریان دفتر', ic:'🏢'},
   {id:'office_files', label:'فایل‌های دفتر', ic:'🗃'},
+  {id:'my_activity', label:'ثبت فعالیت روزانه', ic:'📞'},
+  {id:'attendance', label:'ورود و خروج روزانه', ic:'🕒'},
+  {id:'chat', label:'گفتگو با مدیر', ic:'💬'},
   {id:'backup', label:'بک‌آپ اطلاعات', ic:'💾'},
   {id:'settings', label:'ظاهر و تنظیمات', ic:'⚙️'},
 ];
@@ -2548,6 +2914,9 @@ const ADMIN_NAV = [
   {id:'sazbank', label:'بانک سازنده', ic:'👷'},
   {id:'office_customers', label:'مشتریان دفتر', ic:'🏢'},
   {id:'office_files', label:'فایل‌های دفتر', ic:'🗃'},
+  {id:'my_activity', label:'فعالیت روزانه مشاوران', ic:'📞'},
+  {id:'attendance', label:'ورود و خروج مشاوران', ic:'🕒'},
+  {id:'chat', label:'گفتگو با مشاوران', ic:'💬'},
   {id:'accounting', label:'حسابداری', ic:'🧮'},
   {id:'settings', label:'ظاهر و تنظیمات', ic:'⚙️'},
 ];
@@ -2558,7 +2927,8 @@ const PAGE_TITLES = {
   office_customers:'مشتریان دفتر', office_files:'فایل‌های دفتر',
   mosharekat:'بانک مشارکت در ساخت', sazbank:'بانک سازنده', backup:'بک‌آپ اطلاعات', settings:'تنظیمات',
   admin_dashboard:'داشبورد نظارتی مدیریت', agent_performance:'تحلیل عملکرد مشاوران', agent_accounts:'مدیریت حساب مشاوران', admin_files:'نظارت بر فایل‌های مشاوران', admin_customers:'نظارت بر مشتریان مشاوران',
-  admin_matching:'تطبیق فایل کل دفتر', contracts:'مدیریت قراردادها', admin_mosharekat:'بانک مشارکت در ساخت', accounting:'حسابداری دفتر'
+  admin_matching:'تطبیق فایل کل دفتر', contracts:'مدیریت قراردادها', admin_mosharekat:'بانک مشارکت در ساخت', accounting:'حسابداری دفتر',
+  my_activity:'ثبت فعالیت روزانه', attendance:'ورود و خروج روزانه', chat:'گفتگو'
 };
 
 function pageContent(){
@@ -2583,6 +2953,9 @@ function pageContent(){
     case 'admin_customers': return pageAdminOversightCustomers();
     case 'contracts': return pageAdminContracts();
     case 'accounting': return pageAccounting();
+    case 'my_activity': return pageActivityLog();
+    case 'attendance': return pageAttendance();
+    case 'chat': return SESSION.role==='admin'? pageChatAdmin() : pageChatAgent();
     default: return '<div class="empty-state">صفحه یافت نشد</div>';
   }
 }
@@ -2593,7 +2966,10 @@ function renderAppImmediate(){
   const appEl = document.getElementById('app-screen');
   appEl.style.display='block';
   const nav = SESSION.role==='admin'? ADMIN_NAV : AGENT_NAV;
-  const navHtml = nav.map(n=>`<div class="nav-item ${UI.page===n.id?'active':''}" onclick="UI.page='${n.id}'; UI.sidebarOpen=false; renderApp();"><span class="ic">${n.ic}</span>${n.label}</div>`).join('');
+  const navHtml = nav.map(n=>{
+    const badge = (n.id==='chat' && unreadChatCount())? `<span class="badge badge-danger" style="margin-inline-start:6px;font-size:10px">${toFa(unreadChatCount())}</span>` : '';
+    return `<div class="nav-item ${UI.page===n.id?'active':''}" onclick="UI.page='${n.id}'; UI.sidebarOpen=false; renderApp();"><span class="ic">${n.ic}</span>${n.label}${badge}</div>`;
+  }).join('');
   appEl.innerHTML = `
   <div class="shell">
     <div class="sidebar-backdrop ${UI.sidebarOpen?'show':''}" onclick="UI.sidebarOpen=false; renderApp();"></div>
@@ -2616,6 +2992,8 @@ function renderAppImmediate(){
       <div class="content">${pageContent()}</div>
     </div>
   </div>`;
+  const chatBox = document.getElementById('chat-box');
+  if(chatBox) chatBox.scrollTop = chatBox.scrollHeight;
 }
 
 /* ---------- محافظ رندر در برابر «کلیک از دست‌رفته» ----------
@@ -2712,6 +3090,7 @@ async function doFirstSetup(){
     TOKEN = body.token; localStorage.setItem('sl_token', TOKEN);
     SESSION = { role: body.account.role, name: body.account.name, username: body.account.username, accountId: body.account.id };
     await loadAll();
+    __lastUnreadChat = unreadChatCount();
     UI.page='admin_dashboard';
     renderApp();
   }catch(e){ toast('اتصال به سرور برقرار نشد'); }
@@ -2727,6 +3106,7 @@ async function doLogin(){
     TOKEN = body.token; localStorage.setItem('sl_token', TOKEN);
     SESSION = { role: body.account.role, name: body.account.name, username: body.account.username, accountId: body.account.id };
     await loadAll();
+    __lastUnreadChat = unreadChatCount();
     UI.page = body.account.role==='admin'? 'admin_dashboard':'dashboard';
     renderApp();
   }catch(e){ toast('اتصال به سرور برقرار نشد'); }
@@ -2881,6 +3261,7 @@ async function saveMyAccount(){
         const body = await r.json();
         SESSION = { role: body.account.role, name: body.account.name, username: body.account.username, accountId: body.account.id };
         await loadAll();
+        __lastUnreadChat = unreadChatCount();
         UI.page = SESSION.role==='admin'? 'admin_dashboard':'dashboard';
         renderApp();
         return;
