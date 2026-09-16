@@ -370,6 +370,33 @@ tr:last-child td{border-bottom:none;}
 
 /* ---------- Skeleton loading ---------- */
 .skel{background:linear-gradient(90deg,var(--line) 25%,rgba(255,255,255,.55) 50%,var(--line) 75%);background-size:200% 100%;animation:shimmer 1.4s ease-in-out infinite;border-radius:8px;}
+
+/* ---------- ماشین‌حساب کمیسیون ---------- */
+.cc-hero{background:linear-gradient(135deg,var(--navy),var(--navy-2) 55%,var(--navy-3));border-radius:20px;padding:22px 20px;color:#EDE7D8;margin-bottom:16px;box-shadow:var(--sh-lg);position:relative;overflow:hidden;}
+.cc-hero::after{content:'';position:absolute;inset:0;background:radial-gradient(circle at 85% -10%, rgba(216,184,118,.28), transparent 55%);}
+.cc-hero h2{position:relative;font-size:19px;margin:0 0 4px;display:flex;align-items:center;gap:8px;}
+.cc-hero p{position:relative;margin:0;font-size:12.5px;opacity:.75;line-height:1.8;}
+.cc-grid{display:grid;grid-template-columns:1.1fr 1fr;gap:16px;align-items:start;}
+@media (max-width:880px){.cc-grid{grid-template-columns:1fr;}}
+.cc-card{background:var(--paper-2);border:1px solid var(--line);border-radius:18px;padding:20px;box-shadow:var(--sh-md);}
+.cc-tabs{display:flex;gap:8px;background:var(--paper);border:1px solid var(--line);border-radius:14px;padding:5px;margin-bottom:18px;}
+.cc-tab{flex:1;text-align:center;padding:10px 8px;border-radius:10px;font-weight:700;font-size:13.5px;cursor:pointer;color:var(--muted);transition:.18s;user-select:none;}
+.cc-tab.active{background:linear-gradient(135deg,var(--gold),var(--gold-2));color:var(--on-gold);box-shadow:var(--sh-gold);}
+.cc-field{margin-bottom:16px;}
+.cc-field label{display:block;font-size:12.5px;font-weight:700;color:var(--ink);margin-bottom:7px;}
+.cc-field input{width:100%;border:1.5px solid var(--line);border-radius:12px;padding:13px 14px;font-size:15px;font-family:inherit;background:var(--paper);color:var(--ink);transition:.15s;}
+.cc-field input:focus{outline:none;border-color:var(--gold);box-shadow:0 0 0 3px rgba(176,141,79,.15);}
+.cc-note{font-size:11.5px;color:var(--muted);line-height:1.8;background:var(--paper);border:1px dashed var(--line);border-radius:12px;padding:10px 12px;margin-top:6px;}
+.cc-result{background:linear-gradient(160deg,#152238 0%,#1E3350 100%);border-radius:18px;padding:20px;color:#EDE7D8;position:relative;overflow:hidden;min-height:100%;}
+.cc-result::after{content:'🧮';position:absolute;left:-10px;bottom:-18px;font-size:90px;opacity:.06;}
+.cc-result-title{position:relative;font-size:12.5px;opacity:.7;margin-bottom:14px;display:flex;align-items:center;gap:6px;}
+.cc-result-row{position:relative;display:flex;justify-content:space-between;align-items:center;padding:12px 0;border-bottom:1px solid rgba(255,255,255,.1);font-size:13.5px;}
+.cc-result-row:last-of-type{border-bottom:none;}
+.cc-result-row b{font-size:15px;color:#F3E7C9;font-weight:800;}
+.cc-result-row.main{margin-top:6px;padding:16px 14px;background:linear-gradient(135deg,rgba(216,184,118,.18),rgba(176,141,79,.1));border-radius:14px;border:1px solid rgba(216,184,118,.35);}
+.cc-result-row.main span{font-weight:700;color:#F3E7C9;}
+.cc-result-row.main b{font-size:19px;color:var(--gold-2);}
+.cc-result-words{position:relative;margin-top:12px;font-size:11.5px;opacity:.65;line-height:1.9;}
 </style>
 </head>
 <body>
@@ -897,6 +924,43 @@ const SAZANDE_BANK_FIELDS=[
   {key:'notes', label:'یادداشت / امتیاز', type:'textarea', span:'full'},
 ];
 
+/* ---------- محاسبه‌ی خودکار کمیسیون قرارداد ----------
+   رهن و اجاره: (هر ۱,۰۰۰,۰۰۰ تومان رهن → ۱۵,۰۰۰ تومان) + (یک‌سوم اجاره ماهیانه) → ×۱.۱۰ (۱۰٪ ارزش‌افزوده) = سهم یک طرف
+   خرید و فروش: ۰.۵٪ قیمت کل برای هر طرف → ×۱.۱۰ (۱۰٪ ارزش‌افزوده) = سهم هر طرف
+   در هر دو حالت، عدد نهاییِ «کل» که در قرارداد ذخیره می‌شود، مجموع سهم هر دو طرف است. */
+function computeContractCommission(kind, d){
+  if(kind==='rent'){
+    const rahn = Number(d.rahnPrice||0), ejare = Number(d.ejarePrice||0);
+    const oneSideBase = (rahn/1000000*15000) + (ejare/3);
+    const oneSide = oneSideBase * 1.10;
+    return { oneSide: Math.round(oneSide), total: Math.round(oneSide*2) };
+  }
+  if(kind==='sale'){
+    const total = Number(d.totalPrice||0);
+    const sellerShare = total*0.005*1.10;
+    const buyerShare = total*0.005*1.10;
+    return { sellerShare: Math.round(sellerShare), buyerShare: Math.round(buyerShare), total: Math.round(sellerShare+buyerShare) };
+  }
+  return null;
+}
+// سهم هر مشاور از کمیسیون یک قرارداد؛ سازگار با قراردادهای قدیمی (فقط agentName/agentSharePercent)
+// و قراردادهای جدید که چند مشاور دارند (agentShares: [{name, percent}, ...]).
+function contractAgentShares(item){
+  const total = Number(item.commissionTotal||0);
+  const list = (Array.isArray(item.agentShares) && item.agentShares.length)
+    ? item.agentShares
+    : [{ name:item.agentName||'', percent:Number(item.agentSharePercent||0) }];
+  return list.map(a=>({ name:a.name || item.agentName || '-', percent:Number(a.percent||0), amount:Math.round(total*Number(a.percent||0)/100) }));
+}
+function contractAgentShareTotal(item){
+  return contractAgentShares(item).reduce((s,a)=>s+a.amount,0);
+}
+// سهم مشخصِ یک مشاورِ خاص (با نام) از یک قرارداد — برای گزارش‌های مخصوصِ همان مشاور
+function agentShareAmountFor(item, agentName){
+  const found = contractAgentShares(item).find(a=>a.name===agentName);
+  return found ? found.amount : 0;
+}
+
 function contractFields(kind){
   // kind: rent | sale | mosharekat | other
   if(kind==='rent'){
@@ -912,8 +976,9 @@ function contractFields(kind){
       {key:'endDate', label:'تاریخ پایان قرارداد', type:'date', required:true},
       {key:'agentName', label:'مشاور مربوطه', type:'text'},
       {key:'__c_sep', label:'کمیسیون', type:'section'},
-      {key:'commissionTotal', label:'کمیسیون دریافتی کل (تومان)', type:'number', price:true},
-      {key:'agentSharePercent', label:'سهم مشاور (٪)', type:'number'},
+      {key:'commissionTotal', label:'کمیسیون دریافتی کل (تومان) — محاسبه‌ی خودکار', type:'computed', showIf:d=>!d.manualCommission},
+      {key:'manualCommission', label:'ورود دستی مبلغ کمیسیون (به‌جای محاسبه‌ی خودکار)', type:'checkbox'},
+      {key:'commissionManualValue', label:'مبلغ کمیسیون دریافتی (دستی، تومان)', type:'number', price:true, showIf:d=>d.manualCommission},
       {key:'shiriniAbdarchi', label:'شیرینی آبدارچی (تومان)', type:'number', price:true},
       {key:'__renew_sep', label:'یادآوری تمدید', type:'section'},
       {key:'renewalAlarmDays', label:'چند روز قبل از پایان به مدیر آلارم داده شود؟ (پیش‌فرض ۳۰)', type:'number'},
@@ -931,8 +996,9 @@ function contractFields(kind){
       {key:'contractDate', label:'تاریخ قرارداد', type:'date', required:true},
       {key:'agentName', label:'مشاور مربوطه', type:'text'},
       {key:'__c_sep', label:'کمیسیون', type:'section'},
-      {key:'commissionTotal', label:'کمیسیون دریافتی کل (تومان)', type:'number', price:true},
-      {key:'agentSharePercent', label:'سهم مشاور (٪)', type:'number'},
+      {key:'commissionTotal', label:'کمیسیون دریافتی کل (تومان) — محاسبه‌ی خودکار', type:'computed', showIf:d=>!d.manualCommission},
+      {key:'manualCommission', label:'ورود دستی مبلغ کمیسیون (به‌جای محاسبه‌ی خودکار)', type:'checkbox'},
+      {key:'commissionManualValue', label:'مبلغ کمیسیون دریافتی (دستی، تومان)', type:'number', price:true, showIf:d=>d.manualCommission},
       {key:'shiriniAbdarchi', label:'شیرینی آبدارچی (تومان)', type:'number', price:true},
       {key:'notes', label:'توضیحات', type:'textarea', span:'full'},
     ];
@@ -998,6 +1064,29 @@ function recomputeForm(){
     const area = Number(d.propType==='garden' ? (d.totalArea||d.buildingArea||0) : (d.area||d.buildingArea||0));
     const total = Number(d.totalPrice||0);
     d.pricePerMeter = area>0 ? Math.round(total/area) : 0;
+  }
+  // محاسبه‌ی خودکار کمیسیون قرارداد (رهن/اجاره یا خرید/فروش) — مگر این‌که ورود دستی فعال باشد
+  if(__formFields.some(f=>f.key==='commissionTotal') && (d.__kind==='rent' || d.__kind==='sale')){
+    if(d.manualCommission){
+      d.commissionTotal = Number(d.commissionManualValue||0);
+    } else {
+      const calc = computeContractCommission(d.__kind, d);
+      d.commissionTotal = calc ? calc.total : 0;
+    }
+    const hintEl = document.getElementById('commission-hint');
+    if(hintEl){
+      const calc = computeContractCommission(d.__kind, d);
+      if(!calc){ hintEl.textContent=''; }
+      else if(d.__kind==='rent'){
+        hintEl.textContent = d.manualCommission
+          ? `محاسبه‌ی خودکار (فقط جهت مقایسه): یک طرف ${toFa(calc.oneSide)} تومان — هر دو طرف ${toFa(calc.total)} تومان`
+          : `این مبلغ برای «هر دو طرف» (مالک + مستاجر) است، شامل ۱۰٪ ارزش‌افزوده. سهم یک طرف: ${toFa(calc.oneSide)} تومان.`;
+      } else {
+        hintEl.textContent = d.manualCommission
+          ? `محاسبه‌ی خودکار (فقط جهت مقایسه): فروشنده ${toFa(calc.sellerShare)} — خریدار ${toFa(calc.buyerShare)} — جمع ${toFa(calc.total)} تومان`
+          : `شامل ۱۰٪ ارزش‌افزوده — سهم فروشنده: ${toFa(calc.sellerShare)} تومان، سهم خریدار: ${toFa(calc.buyerShare)} تومان.`;
+      }
+    }
   }
   document.querySelectorAll('[data-computed]').forEach(el=>{
     const k=el.getAttribute('data-computed');
@@ -1195,7 +1284,11 @@ function contractCopyText(item, kind){
   if(kind==='sale') lines.push(`فروشنده: ${item.sellerName||'-'} (${item.sellerPhone||'-'})`, `خریدار: ${item.buyerName||'-'} (${item.buyerPhone||'-'})`, `مبلغ: ${toFa(item.totalPrice)} تومان`, `تاریخ: ${faDate(item.contractDate)}`);
   if(kind==='mosharekat') lines.push(`مالک: ${item.ownerName||'-'}`, `سازنده: ${item.builderName||'-'}`, `تاریخ: ${faDate(item.contractDate)}`);
   if(kind==='other') lines.push(`بنگاه: ${item.agencyName||'-'}`, `مالک: ${item.ownerName||'-'}`, `طرف مقابل: ${item.tenantOrBuyerName||'-'}`);
-  lines.push(`کمیسیون کل: ${toFa(item.commissionTotal)} تومان — سهم مشاور: ${item.agentSharePercent||0}٪`);
+  const shares = contractAgentShares(item);
+  const sharesText = shares.length>1
+    ? shares.map(a=>`${a.name} (${a.percent}٪)`).join('، ')
+    : `${item.agentSharePercent||0}٪`;
+  lines.push(`کمیسیون کل: ${toFa(item.commissionTotal)} تومان — سهم مشاور${shares.length>1?'ان':''}: ${sharesText}`);
   if(item.shiriniAbdarchi) lines.push(`شیرینی آبدارچی: ${toFa(item.shiriniAbdarchi)} تومان`);
   lines.push(`مشاور: ${item.agentName||'-'}`);
   lines.push(`— دفتر املاک اسپرلوس —`);
@@ -1518,14 +1611,39 @@ function openContractModal(kind, existing){
   const data = existing? Object.assign({}, existing) : {
     renewalAlarmDays: kind==='rent'||kind==='other'?30:undefined,
   };
+  data.__kind = kind;
+  // برای قراردادهای قدیمیِ از قبل ثبت‌شده که کمیسیون‌شان دستی وارد شده بود، پیش‌فرض را
+  // «دستی» می‌گذاریم تا با باز کردن فرم، عدد قبلی‌شان به‌طور ناگهانی با فرمول جدید عوض نشود.
+  if(existing){
+    if(data.manualCommission===undefined) data.manualCommission = !!existing.commissionTotal;
+    data.commissionManualValue = existing.commissionTotal;
+  }
   const photos = (data.photos||[]).slice();
+  const showAgentShares = kind==='rent' || kind==='sale';
+  let agentShares = (Array.isArray(data.agentShares) && data.agentShares.length)
+    ? data.agentShares.map(a=>({ name:a.name||'', percent:Number(a.percent||0) }))
+    : [{ name: data.agentName || SESSION.name, percent: existing? Number(data.agentSharePercent||40) : 40 }];
   const extraHtml = `
+    ${showAgentShares? `
+    <div class="section-label" style="margin-top:14px">🧾 تقسیم کمیسیون بین مشاوران</div>
+    <div id="commission-hint" class="cc-note" style="margin-bottom:10px"></div>
+    <div id="agent-shares-rows"></div>
+    <button type="button" class="btn btn-outline btn-sm" id="agent-shares-add" style="margin-top:2px">+ افزودن مشاور</button>
+    <div id="agent-shares-total" style="font-size:12px;color:var(--muted);margin-top:8px"></div>
+    ` : ''}
     <div class="section-label" style="margin-top:14px">پیوست عکس قرارداد</div>
     <div class="upload-box" id="contract-upload-box">📎 برای افزودن عکس قرارداد کلیک کنید</div>
     <input type="file" id="contract-file-input" accept="image/*" multiple style="display:none">
     <div class="photo-row" id="contract-photo-row"></div>`;
   openFormModal((existing?'ویرایش':'ثبت')+' قرارداد '+meta.label, contractFields(kind), data, async (formData)=>{
     formData.photos = photos;
+    if(showAgentShares){
+      const cleaned = agentShares.filter(a=>a.name && a.name.trim());
+      formData.agentShares = cleaned.length? cleaned : [{name: formData.agentName||SESSION.name, percent:40}];
+      formData.agentSharePercent = formData.agentShares[0].percent;
+      if(!formData.agentName) formData.agentName = formData.agentShares[0].name;
+    }
+    delete formData.commissionManualValue; // فقط برای فرم لازم بود؛ عدد نهایی در commissionTotal ذخیره شده
     if(existing){
       Object.assign(existing, formData); existing.updatedAt=nowIso();
     } else {
@@ -1535,6 +1653,22 @@ function openContractModal(kind, existing){
     await saveCollection(meta.coll); toast('قرارداد ذخیره شد ✓'); renderApp();
   }, extraHtml);
 
+  function renderAgentShareRows(){
+    const wrap = document.getElementById('agent-shares-rows');
+    if(!wrap) return;
+    wrap.innerHTML = agentShares.map((a,i)=>`
+      <div style="display:flex;gap:6px;margin-bottom:8px;align-items:center">
+        <input type="text" placeholder="نام مشاور" value="${esc(a.name)}" data-ash-name="${i}" style="flex:2;border:1.5px solid var(--line);border-radius:10px;padding:9px 10px;font-family:inherit;font-size:13.5px">
+        <input type="number" placeholder="سهم ٪" value="${a.percent||''}" data-ash-percent="${i}" style="flex:1;max-width:84px;border:1.5px solid var(--line);border-radius:10px;padding:9px 10px;font-family:inherit;font-size:13.5px">
+        ${agentShares.length>1? `<button type="button" class="btn btn-outline btn-sm" data-ash-remove="${i}">✕</button>`:''}
+      </div>`).join('');
+    const totalPct = agentShares.reduce((s,a)=>s+Number(a.percent||0),0);
+    const totalEl = document.getElementById('agent-shares-total');
+    if(totalEl) totalEl.innerHTML = `جمع سهم مشاوران: <b>${totalPct}٪</b>` + (totalPct>100? ' — <span style="color:var(--danger)">⚠️ جمع سهم‌ها بیشتر از ۱۰۰٪ شده است</span>':'');
+    wrap.querySelectorAll('[data-ash-name]').forEach(el=> el.oninput = ()=>{ agentShares[+el.getAttribute('data-ash-name')].name = el.value; });
+    wrap.querySelectorAll('[data-ash-percent]').forEach(el=> el.oninput = ()=>{ agentShares[+el.getAttribute('data-ash-percent')].percent = Number(el.value||0); renderAgentShareRows(); });
+    wrap.querySelectorAll('[data-ash-remove]').forEach(el=> el.onclick = ()=>{ agentShares.splice(+el.getAttribute('data-ash-remove'),1); renderAgentShareRows(); });
+  }
   function renderPhotoRow(){
     const row = document.getElementById('contract-photo-row');
     if(!row) return;
@@ -1545,6 +1679,11 @@ function openContractModal(kind, existing){
   window.__viewContractPhoto = (i)=>{ const w=window.open(); if(w) w.document.write('<img src="'+photos[i]+'" style="max-width:100%">'); };
   setTimeout(()=>{
     renderPhotoRow();
+    if(showAgentShares){
+      renderAgentShareRows();
+      const addBtn = document.getElementById('agent-shares-add');
+      if(addBtn) addBtn.onclick = ()=>{ agentShares.push({name:'', percent:0}); renderAgentShareRows(); };
+    }
     const box = document.getElementById('contract-upload-box');
     const inp = document.getElementById('contract-file-input');
     if(box) box.onclick = ()=> inp.click();
@@ -2523,7 +2662,7 @@ function computeAgentPerformance(agentName, periodStartIso){
   const commissionable = [...cRent, ...cSale, ...cMosh];
   const totalContracts = commissionable.length + cOther.length;
   const totalCommission = commissionable.reduce((s,c)=>s+Number(c.commissionTotal||0),0);
-  const agentShare = commissionable.reduce((s,c)=>s+Math.round(Number(c.commissionTotal||0)*Number(c.agentSharePercent||0)/100),0);
+  const agentShare = commissionable.reduce((s,c)=>s+agentShareAmountFor(c, agentName),0);
   const officeShare = totalCommission - agentShare;
   const teaBoy = commissionable.reduce((s,c)=>s+Number(c.teaBoyFee||0),0);
 
@@ -2779,8 +2918,12 @@ function contractCardHtml(item, kind){
     </div>`;
   }
   const photos = item.photos||[];
-  const commissionAgent = Math.round(Number(item.commissionTotal||0)*Number(item.agentSharePercent||0)/100);
+  const shares = contractAgentShares(item);
+  const commissionAgent = contractAgentShareTotal(item);
   const commissionOffice = Number(item.commissionTotal||0)-commissionAgent;
+  const sharesWords = shares.length>1
+    ? shares.map(a=>`${esc(a.name)} (${a.percent}٪): ${toFa(a.amount)} تومان`).join(' — ')
+    : `سهم مشاور (${item.agentSharePercent||0}٪): ${toFa(commissionAgent)} تومان`;
   return `
   <div class="card">
     <div class="card-top">
@@ -2797,7 +2940,7 @@ function contractCardHtml(item, kind){
     </div>
     ${item.commissionTotal!==undefined && item.commissionTotal!=='' ? `<div class="price-box">
       <div class="main-price">کمیسیون کل: ${toFa(item.commissionTotal)} تومان</div>
-      <div class="words">سهم مشاور (${item.agentSharePercent||0}٪): ${toFa(commissionAgent)} تومان — سهم دفتر: ${toFa(commissionOffice)} تومان</div>
+      <div class="words">${sharesWords} — سهم دفتر: ${toFa(commissionOffice)} تومان</div>
     </div>`:''}
     ${item.shiriniAbdarchi? `<div class="desc-box">🍬 شیرینی آبدارچی: ${toFa(item.shiriniAbdarchi)} تومان</div>`:''}
     ${alarmHtml}
@@ -2837,16 +2980,20 @@ function pageAccounting(){
     ...DB.cRent.map(c=>({...c, kind:'rent'})), ...DB.cSale.map(c=>({...c, kind:'sale'})), ...DB.cMosh.map(c=>({...c, kind:'mosharekat'}))
   ].filter(c=>c.commissionTotal || c.shiriniAbdarchi);
   const totalCommission = all.reduce((s,c)=>s+Number(c.commissionTotal||0),0);
-  const totalAgentShare = all.reduce((s,c)=>s+Math.round(Number(c.commissionTotal||0)*Number(c.agentSharePercent||0)/100),0);
+  const totalAgentShare = all.reduce((s,c)=>s+contractAgentShareTotal(c),0);
   const totalOfficeShare = totalCommission-totalAgentShare;
   const totalShirini = all.reduce((s,c)=>s+Number(c.shiriniAbdarchi||0),0);
   const byAgent = {};
   all.forEach(c=>{
-    const a = c.agentName || 'نامشخص';
-    if(!byAgent[a]) byAgent[a]={count:0, commission:0, agentShare:0, shirini:0};
-    byAgent[a].count++; byAgent[a].commission += Number(c.commissionTotal||0);
-    byAgent[a].agentShare += Math.round(Number(c.commissionTotal||0)*Number(c.agentSharePercent||0)/100);
-    byAgent[a].shirini += Number(c.shiriniAbdarchi||0);
+    const shares = contractAgentShares(c);
+    // شیرینی آبدارچی و شمارشِ قرارداد، به‌ازای هر قرارداد یک‌بار به مشاورِ اصلی آن نسبت داده می‌شود
+    // (نه به هر مشاورِ همکار)، تا دوبار حساب نشود؛ ولی سهمِ کمیسیون دقیقاً طبق درصد خودِ هر مشاور جدا می‌شود.
+    shares.forEach((sh,i)=>{
+      const a = sh.name || 'نامشخص';
+      if(!byAgent[a]) byAgent[a]={count:0, commission:0, agentShare:0, shirini:0};
+      byAgent[a].agentShare += sh.amount;
+      if(i===0){ byAgent[a].count++; byAgent[a].commission += Number(c.commissionTotal||0); byAgent[a].shirini += Number(c.shiriniAbdarchi||0); }
+    });
   });
   const maxCommission = Math.max(1, ...Object.values(byAgent).map(x=>x.commission));
   const kindLabel={rent:'اجاره',sale:'فروش',mosharekat:'مشارکت'};
@@ -2864,21 +3011,84 @@ function pageAccounting(){
     Object.entries(byAgent).map(([a,v])=>`
       <div style="margin-bottom:14px">
         <div style="display:flex;justify-content:space-between;font-size:13px;font-weight:700;margin-bottom:5px">
-          <span>${esc(a)} (${v.count} قرارداد)</span><span>${toFa(v.commission)} تومان</span>
+          <span>${esc(a)} (${v.count} قرارداد)</span><span>${toFa(v.agentShare)} تومان</span>
         </div>
         <div style="background:var(--paper);border-radius:8px;height:10px;overflow:hidden">
           <div style="background:linear-gradient(90deg,var(--gold),var(--gold-2));height:100%;width:${(v.commission/maxCommission*100).toFixed(1)}%"></div>
         </div>
-        <div style="font-size:11px;color:var(--muted);margin-top:3px">سهم مشاور: ${toFa(v.agentShare)} تومان — سهم دفتر: ${toFa(v.commission-v.agentShare)} تومان${v.shirini?` — شیرینی آبدارچی: ${toFa(v.shirini)} تومان`:''}</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:3px">سهم این مشاور از کمیسیون: ${toFa(v.agentShare)} تومان${v.shirini?` — شیرینی آبدارچی: ${toFa(v.shirini)} تومان`:''}</div>
       </div>`).join('')}
   </div>
   <div class="section-title">📋 لیست کامل تراکنش‌های کمیسیون</div>
-  <div class="table-wrap"><table><thead><tr><th>نوع</th><th>آدرس</th><th>مشاور</th><th>کمیسیون کل</th><th>سهم مشاور (٪)</th><th>مبلغ سهم مشاور</th><th>سهم دفتر</th><th>شیرینی آبدارچی</th><th>تاریخ</th></tr></thead><tbody>
+  <div class="table-wrap"><table><thead><tr><th>نوع</th><th>آدرس</th><th>مشاور(ان)</th><th>کمیسیون کل</th><th>سهم مشاوران</th><th>مبلغ سهم مشاوران</th><th>سهم دفتر</th><th>شیرینی آبدارچی</th><th>تاریخ</th></tr></thead><tbody>
   ${all.sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt)).map(c=>{
-    const agentAmt = Math.round(Number(c.commissionTotal||0)*Number(c.agentSharePercent||0)/100);
-    return `<tr><td>${kindLabel[c.kind]}</td><td>${esc((c.address||'').slice(0,28))}</td><td>${esc(c.agentName||'-')}</td><td>${toFa(c.commissionTotal)}</td><td>${c.agentSharePercent||0}٪</td><td>${toFa(agentAmt)}</td><td>${toFa(Number(c.commissionTotal||0)-agentAmt)}</td><td>${toFa(c.shiriniAbdarchi||0)}</td><td>${faDate(c.startDate||c.contractDate)}</td></tr>`;
+    const shares = contractAgentShares(c);
+    const agentAmt = contractAgentShareTotal(c);
+    const agentsCol = shares.map(s=>esc(s.name)).join('، ');
+    const percentCol = shares.map(s=>s.percent+'٪').join('، ');
+    return `<tr><td>${kindLabel[c.kind]}</td><td>${esc((c.address||'').slice(0,28))}</td><td>${agentsCol}</td><td>${toFa(c.commissionTotal)}</td><td>${percentCol}</td><td>${toFa(agentAmt)}</td><td>${toFa(Number(c.commissionTotal||0)-agentAmt)}</td><td>${toFa(c.shiriniAbdarchi||0)}</td><td>${faDate(c.startDate||c.contractDate)}</td></tr>`;
   }).join('')}
   </tbody></table></div>`;
+}
+
+/* =========================================================================
+   ماشین‌حساب کمیسیون (صفحه‌ی مستقل — برای مدیر و مشاوران)
+   ========================================================================= */
+function pageCommissionCalculator(){
+  UI.commissionCalc = UI.commissionCalc || { mode:'rent', rahn:'', ejare:'', totalPrice:'' };
+  const st = UI.commissionCalc;
+  const rahnId='cc-rahn', ejareId='cc-ejare', totalId='cc-total';
+  let resultHtml;
+  if(st.mode==='rent'){
+    const calc = computeContractCommission('rent', { rahnPrice:st.rahn, ejarePrice:st.ejare }) || {oneSide:0,total:0};
+    resultHtml = `
+      <div class="cc-result-title">🧾 نتیجه‌ی محاسبه — رهن و اجاره</div>
+      <div class="cc-result-row"><span>کمیسیون یک طرف (مالک یا مستاجر)</span><b>${toFa(calc.oneSide)} تومان</b></div>
+      <div class="cc-result-row main"><span>جمع کل (هر دو طرف)</span><b>${toFa(calc.total)} تومان</b></div>
+      <div class="cc-result-words">${numberToWordsFa(calc.total)}</div>`;
+  } else {
+    const calc = computeContractCommission('sale', { totalPrice:st.totalPrice }) || {sellerShare:0,buyerShare:0,total:0};
+    resultHtml = `
+      <div class="cc-result-title">🧾 نتیجه‌ی محاسبه — خرید و فروش</div>
+      <div class="cc-result-row"><span>سهم فروشنده</span><b>${toFa(calc.sellerShare)} تومان</b></div>
+      <div class="cc-result-row"><span>سهم خریدار</span><b>${toFa(calc.buyerShare)} تومان</b></div>
+      <div class="cc-result-row main"><span>جمع کل کمیسیون دفتر</span><b>${toFa(calc.total)} تومان</b></div>
+      <div class="cc-result-words">${numberToWordsFa(calc.total)}</div>`;
+  }
+  return `
+  <div class="cc-hero">
+    <h2>🧮 ماشین‌حساب کمیسیون</h2>
+    <p>مبلغ رهن/اجاره یا قیمت کل معامله را وارد کنید تا کمیسیون بر اساس فرمول رسمی دفتر — همراه با ۱۰٪ ارزش‌افزوده — به‌صورت آنی محاسبه شود.</p>
+  </div>
+  <div class="cc-grid">
+    <div class="cc-card">
+      <div class="cc-tabs">
+        <div class="cc-tab ${st.mode==='rent'?'active':''}" onclick="UI.commissionCalc.mode='rent';renderApp();">🔑 رهن و اجاره</div>
+        <div class="cc-tab ${st.mode==='sale'?'active':''}" onclick="UI.commissionCalc.mode='sale';renderApp();">💰 خرید و فروش</div>
+      </div>
+      ${st.mode==='rent'? `
+        <div class="cc-field">
+          <label>مبلغ رهن (تومان)</label>
+          <input id="${rahnId}" type="text" inputmode="numeric" placeholder="مثال: 200,000,000" value="${st.rahn!==''? toFa(st.rahn):''}"
+            oninput="const d=this.value.replace(/[^\\d]/g,''); UI.commissionCalc.rahn=d===''?'':Number(d); refocusAfterRender('${rahnId}');">
+        </div>
+        <div class="cc-field">
+          <label>اجاره ماهیانه (تومان)</label>
+          <input id="${ejareId}" type="text" inputmode="numeric" placeholder="مثال: 8,000,000" value="${st.ejare!==''? toFa(st.ejare):''}"
+            oninput="const d=this.value.replace(/[^\\d]/g,''); UI.commissionCalc.ejare=d===''?'':Number(d); refocusAfterRender('${ejareId}');">
+        </div>
+        <div class="cc-note">فرمول: (هر ۱,۰۰۰,۰۰۰ تومان رهن ← ۱۵,۰۰۰ تومان) + (یک‌سوم اجاره ماهیانه)، سپس ۱۰٪ ارزش‌افزوده به کل اضافه می‌شود. مبلغ «یک طرف» برای مالک یا مستاجر است؛ برای هر دو طرف، دو برابر می‌شود.</div>
+      ` : `
+        <div class="cc-field">
+          <label>مبلغ کل معامله (تومان)</label>
+          <input id="${totalId}" type="text" inputmode="numeric" placeholder="مثال: 3,000,000,000" value="${st.totalPrice!==''? toFa(st.totalPrice):''}"
+            oninput="const d=this.value.replace(/[^\\d]/g,''); UI.commissionCalc.totalPrice=d===''?'':Number(d); refocusAfterRender('${totalId}');">
+        </div>
+        <div class="cc-note">فرمول: ۱٪ از مبلغ کل معامله (نیم‌درصد سهم فروشنده، نیم‌درصد سهم خریدار)، سپس روی سهم هر طرف ۱۰٪ ارزش‌افزوده اضافه می‌شود.</div>
+      `}
+    </div>
+    <div class="cc-result">${resultHtml}</div>
+  </div>`;
 }
 /* =========================================================================
    NAV CONFIG + ROUTER
@@ -2890,6 +3100,7 @@ const AGENT_NAV = [
   {id:'cust_rent', label:'مشتریان (رهن و اجاره)', ic:'👥'},
   {id:'cust_buy', label:'مشتریان (خرید)', ic:'🧑‍💼'},
   {id:'matching', label:'تطبیق فایل', ic:'🔍'},
+  {id:'commission_calc', label:'ماشین‌حساب کمیسیون', ic:'🧮'},
   {id:'opportunities', label:'فرصت‌های آینده', ic:'🔮'},
   {id:'mosharekat', label:'مشارکت در ساخت', ic:'🏗'},
   {id:'sazbank', label:'بانک سازنده', ic:'👷'},
@@ -2910,6 +3121,7 @@ const ADMIN_NAV = [
   {id:'admin_matching', label:'تطبیق فایل (کل دفتر)', ic:'🔍'},
   {id:'admin_opportunities', label:'فرصت‌های آینده', ic:'🔮'},
   {id:'contracts', label:'مدیریت قراردادها', ic:'📄'},
+  {id:'commission_calc', label:'ماشین‌حساب کمیسیون', ic:'🧮'},
   {id:'admin_mosharekat', label:'مشارکت در ساخت', ic:'🏗'},
   {id:'sazbank', label:'بانک سازنده', ic:'👷'},
   {id:'office_customers', label:'مشتریان دفتر', ic:'🏢'},
@@ -2928,6 +3140,7 @@ const PAGE_TITLES = {
   mosharekat:'بانک مشارکت در ساخت', sazbank:'بانک سازنده', backup:'بک‌آپ اطلاعات', settings:'تنظیمات',
   admin_dashboard:'داشبورد نظارتی مدیریت', agent_performance:'تحلیل عملکرد مشاوران', agent_accounts:'مدیریت حساب مشاوران', admin_files:'نظارت بر فایل‌های مشاوران', admin_customers:'نظارت بر مشتریان مشاوران',
   admin_matching:'تطبیق فایل کل دفتر', contracts:'مدیریت قراردادها', admin_mosharekat:'بانک مشارکت در ساخت', accounting:'حسابداری دفتر',
+  commission_calc:'ماشین‌حساب کمیسیون',
   my_activity:'ثبت فعالیت روزانه', attendance:'ورود و خروج روزانه', chat:'گفتگو'
 };
 
@@ -2939,6 +3152,7 @@ function pageContent(){
     case 'cust_rent': return pageAgentCustomers('rent');
     case 'cust_buy': return pageAgentCustomers('buy');
     case 'matching': case 'admin_matching': return pageMatching();
+    case 'commission_calc': return pageCommissionCalculator();
     case 'opportunities': case 'admin_opportunities': return pageOpportunities();
     case 'office_customers': return pageOfficeCustomers();
     case 'office_files': return pageOfficeFiles();
