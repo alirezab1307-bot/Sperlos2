@@ -1023,7 +1023,7 @@ function contractFields(kind){
   // other agency
   return [
     {key:'address', label:'آدرس ملک', type:'textarea', required:true, span:'full'},
-    {key:'agencyName', label:'نام بنگاه دیگر', type:'text'},
+    {key:'agencyName', label:'نام املاک دیگر', type:'text'},
     {key:'ownerName', label:'نام مالک', type:'text'},
     {key:'ownerPhone', label:'شماره مالک', type:'tel'},
     {key:'tenantOrBuyerName', label:'نام مستاجر/خریدار', type:'text'},
@@ -1278,12 +1278,12 @@ function sazBankCopyText(item){
   return [`👷 بانک سازنده`, `نام: ${item.name||'-'} | تماس: ${item.phone||'-'}`, `تعداد پروژه: ${item.projectsCount||'-'}`, `رزومه: ${item.resume||'-'}`, `— دفتر املاک اسپرلوس —`].join('\n');
 }
 function contractCopyText(item, kind){
-  const map={rent:'اجاره', sale:'فروش', mosharekat:'مشارکت در ساخت', other:'قرارداد بنگاه دیگر'};
+  const map={rent:'اجاره', sale:'فروش', mosharekat:'مشارکت در ساخت', other:'قرارداد املاک دیگر'};
   const lines=[`📄 قرارداد ${map[kind]}`, `آدرس: ${item.address||'-'}`];
   if(kind==='rent') lines.push(`مالک: ${item.ownerName||'-'} (${item.ownerPhone||'-'})`, `مستاجر: ${item.tenantName||'-'} (${item.tenantPhone||'-'})`, `رهن: ${toFa(item.rahnPrice)} — اجاره: ${toFa(item.ejarePrice)}`, `از ${faDate(item.startDate)} تا ${faDate(item.endDate)}`);
   if(kind==='sale') lines.push(`فروشنده: ${item.sellerName||'-'} (${item.sellerPhone||'-'})`, `خریدار: ${item.buyerName||'-'} (${item.buyerPhone||'-'})`, `مبلغ: ${toFa(item.totalPrice)} تومان`, `تاریخ: ${faDate(item.contractDate)}`);
   if(kind==='mosharekat') lines.push(`مالک: ${item.ownerName||'-'}`, `سازنده: ${item.builderName||'-'}`, `تاریخ: ${faDate(item.contractDate)}`);
-  if(kind==='other') lines.push(`بنگاه: ${item.agencyName||'-'}`, `مالک: ${item.ownerName||'-'}`, `طرف مقابل: ${item.tenantOrBuyerName||'-'}`);
+  if(kind==='other') lines.push(`املاک: ${item.agencyName||'-'}`, `مالک: ${item.ownerName||'-'}`, `طرف مقابل: ${item.tenantOrBuyerName||'-'}`);
   const shares = contractAgentShares(item);
   const sharesText = shares.length>1
     ? shares.map(a=>`${a.name} (${a.percent}٪)`).join('، ')
@@ -1585,7 +1585,7 @@ async function deleteSazBank(id){ if(!confirm('حذف شود؟'))return; DB.sazB
 /* =========================================================================
    CRUD: قراردادها (با آپلود عکس)
    ========================================================================= */
-const CONTRACT_MAP = { rent:{coll:'cRent', label:'اجاره'}, sale:{coll:'cSale', label:'فروش'}, mosharekat:{coll:'cMosh', label:'مشارکت در ساخت'}, other:{coll:'cOther', label:'بنگاه دیگر'} };
+const CONTRACT_MAP = { rent:{coll:'cRent', label:'اجاره'}, sale:{coll:'cSale', label:'فروش'}, mosharekat:{coll:'cMosh', label:'مشارکت در ساخت'}, other:{coll:'cOther', label:'املاک دیگر'} };
 
 function resizeImageFile(file, maxW){
   return new Promise((resolve)=>{
@@ -2554,6 +2554,73 @@ function pageBackup(){
 /* =========================================================================
    صفحه تنظیمات مشاور
    ========================================================================= */
+/* =========================================================================
+   راهنمای برنامه (فقط پنل مشاور) — محتوای ثابت و سبک، بدون بار اضافه روی دیتابیس
+   ========================================================================= */
+const GUIDE_PALETTE = ['var(--gold)','var(--emerald)','var(--navy)','var(--gold-2)','var(--emerald-2)','var(--navy-2)'];
+const GUIDE_SECTIONS = [
+  { ic:'🏠', title:'داشبورد', intro:'اولین صفحه‌ای که باز می‌شه؛ یه نگاه سریع به وضعیت کارت می‌ندازه.',
+    bullets:['کارت‌های بالا تعداد فایل، مشتری و فرصت‌های فعالتو نشون می‌ده','لیست پیگیری‌های نزدیک یا عقب‌افتاده همین‌جاست، غافلگیر نمی‌شی','با یه کلیک از همین‌جا می‌ری تو بخشی که لازم داری'] },
+  { ic:'🔑', title:'فایل‌ها (رهن و اجاره)', intro:'فایل‌های رهن‌واجاره‌ای که از مالک‌ها گرفتی رو اینجا ثبت و مدیریت می‌کنی.',
+    bullets:['بالای صفحه تب نوع ملک هست: آپارتمان، ویلایی، اداری/تجاری، پیش‌فروش، باغ و زمین','با دکمه «+ فایل جدید» فرم کامل مشخصات (متراژ، قیمت، امکانات و...) رو پر کن','روی هر کارت می‌تونی وضعیتش رو عوض کنی: فعال / اجاره‌شده / منقضی','دکمه «کپی مشخصات» یه متن مرتب برای ارسال به مشتری تو واتساپ/تلگرام می‌سازه','حتماً «تاریخ تخلیه» رو پر کن تا بدونی فایل کِی خالی می‌شه','فایل‌های بسته‌شده می‌رن تو آرشیو؛ از بالای صفحه آرشیو رو هم می‌تونی ببینی','فقط اجازه‌ی ویرایش داری؛ حذف فایل کار مدیره'] },
+  { ic:'💰', title:'فایل‌ها (فروش)', intro:'همون بخش فایل‌ها، ولی برای معاملات فروش — همون قابلیت‌ها رو داره.',
+    bullets:['فرمش کمی فرق داره: قیمت کل، قیمت هر متر (خودش حساب می‌شه)، وضعیت سند','برای باغ و زمین، کاربری زمین (دامداری/مرغداری/کشاورزی/طیور/سایر) رو مشخص کن','پیش‌فروش هم فیلدهای مخصوص خودش رو داره: مرحله ساخت، زمان تحویل'] },
+  { ic:'👥', title:'مشتریان (رهن و اجاره) و خرید', intro:'مشخصات و بودجه‌ی مشتری‌هایی که دنبال ملک می‌گردن رو اینجا ثبت کن.',
+    bullets:['تب نوع ملک موردنظر مشتری رو انتخاب کن','بالای لیست، سرچ با نام یا شماره تماس هست','فیلتر بازه‌ی قیمت هم داره؛ عدد رو بنویسی خودش جداکننده و مبلغ به‌حروف رو نشونت می‌ده','برای رهن‌واجاره، «تاریخ تخلیه» یعنی از کِی نیاز به ملک داره'] },
+  { ic:'🔍', title:'تطبیق فایل', intro:'این بخش خودش می‌گرده و فایل مناسب مشتری رو پیدا می‌کنه — وقتتو نجات می‌ده.',
+    bullets:['دو زیربخش داره: «۱) مشتری با فایل‌ها» و «۲) مشتریان دفتر با فایل‌های تو»','بخش ۱: فایل‌های خودت + فایل‌های دفتر + فایل مشاوران دیگه رو نشون می‌ده — فقط شماره مالک فایل مشاوران دیگه مخفیه، باید با خودشون هماهنگ کنی','بخش ۲: وقتی فایل خودت با یکی از مشتری‌های دفتر مدیر هم‌خونی داره','بالای صفحه می‌تونی با نام مشتری هم سرچ کنی'] },
+  { ic:'🧮', title:'ماشین‌حساب کمیسیون', intro:'قبل از جوش‌دادن قرارداد، سریع ببین کمیسیونت چقدر می‌شه.',
+    bullets:['برای رهن‌واجاره: مبلغ رهن و اجاره رو بزن','برای خرید و فروش: قیمت کل معامله رو بزن','نتیجه بلافاصله با فرمول رسمی دفتر (همراه با ارزش‌افزوده) محاسبه می‌شه'] },
+  { ic:'🔮', title:'فرصت‌های آینده', intro:'فایل‌هایی که الان مشتری نداره ولی حیفه از دست بره؛ اینجا نگه‌شون دار.',
+    bullets:['یه تاریخ پیگیری بعدی براش بذار','وقتی موعدش برسه، تو داشبورد بهت یادآوری می‌شه','اگه هنوز وقتش نرسیده، دکمه‌ی «تمدید ۳ روز» رو بزن'] },
+  { ic:'🏗', title:'مشارکت در ساخت', intro:'زمین‌هایی که مالکشون دنبال مشارکت با سازنده‌ست رو اینجا ثبت کن.', bullets:['مشخصات زمین و شرایط موردنظر مالک رو کامل بنویس تا بعداً راحت‌تر با سازنده‌ها تطبیق بدی'] },
+  { ic:'👷', title:'بانک سازنده', intro:'لیست سازنده‌هایی که می‌تونی زمین‌های مشارکتی رو بهشون معرفی کنی.', bullets:['شماره تماس و نوع پروژه‌ی موردعلاقه‌ی هر سازنده رو ثبت کن تا سریع بدونی زمین رو به کی معرفی کنی'] },
+  { ic:'🏢', title:'مشتریان دفتر و فایل‌های دفتر', intro:'این دو بخش رو مدیر وارد می‌کنه و در اختیار همه‌ی مشاوران می‌ذاره.',
+    bullets:['فقط می‌تونی ببینی، تماس بگیری و کپی مشخصات بگیری','ویرایش یا حذفشون کار مدیره، دست تو نیست'] },
+  { ic:'📞', title:'ثبت فعالیت روزانه', intro:'هر روز تعداد تماس، بازدید و آگهی دیواری که زدی رو ثبت کن.', bullets:['هم به خودت کمک می‌کنه پیگیر بمونی، هم مدیر می‌تونه عملکردتو ببینه'] },
+  { ic:'🕒', title:'ورود و خروج روزانه', intro:'ساعت ورود و خروجت به دفتر رو همین‌جا ثبت کن.', bullets:['اگه توضیحی هم لازمه (مثلاً مرخصی ساعتی) تو قسمت توضیحات بنویس'] },
+  { ic:'💬', title:'گفتگو با مدیر', intro:'چت مستقیم و سریع با مدیر دفتر، بدون نیاز به واتساپ جدا.', bullets:['پیام‌های نخونده با یه عدد قرمز کنار همین آیتم تو منو نشونت داده می‌شه'] },
+  { ic:'💾', title:'بک‌آپ اطلاعات', intro:'یه پشتیبان از اطلاعاتت بگیر که هیچ‌وقت چیزی گم نشه.',
+    bullets:['دکمه‌ی «دانلود بک‌آپ» یه فایل JSON از همه‌ی فایل و مشتری‌هات می‌سازه','توصیه می‌شه هر ۲۴ ساعت یه‌بار بگیری؛ اگه دیرتر بشه، برنامه بهت هشدار می‌ده','برای بازگردوندن هم از همون فایل، از قسمت «بازیابی از بک‌آپ» استفاده کن'] },
+  { ic:'⚙️', title:'ظاهر و تنظیمات', intro:'رنگ و پوسته‌ی برنامه رو به سلیقه‌ی خودت عوض کن.', bullets:['چند تم رنگی مختلف داری؛ هر کدوم رو دوست داشتی انتخاب کن، خودش ذخیره می‌مونه'] },
+];
+function guideSectionHtml(sec, idx){
+  const color = GUIDE_PALETTE[idx % GUIDE_PALETTE.length];
+  const bulletsHtml = (sec.bullets||[]).map(b=>`<li style="margin-bottom:6px">${esc(b)}</li>`).join('');
+  return `
+  <details class="card" style="margin-bottom:10px;padding:0;overflow:hidden" ${idx===0?'open':''}>
+    <summary style="cursor:pointer;list-style:none;padding:14px 16px;display:flex;align-items:center;gap:12px;font-weight:800;color:var(--ink);font-size:14px">
+      <span style="width:34px;height:34px;border-radius:10px;background:${color}22;color:${color};display:flex;align-items:center;justify-content:center;font-size:17px;flex-shrink:0">${sec.ic}</span>
+      <span style="flex:1">${esc(sec.title)}</span>
+      <span style="color:var(--muted);font-size:12px">جزئیات ▾</span>
+    </summary>
+    <div style="padding:0 16px 16px 16px">
+      <div style="font-size:13px;color:var(--ink);line-height:1.9;margin-bottom:${sec.bullets&&sec.bullets.length?'8px':'0'}">${esc(sec.intro)}</div>
+      ${sec.bullets&&sec.bullets.length? `<ul style="margin:0;padding-inline-start:20px;font-size:12.5px;color:var(--muted);line-height:1.8">${bulletsHtml}</ul>`:''}
+    </div>
+  </details>`;
+}
+function pageGuide(){
+  return `
+  <div class="card" style="margin-bottom:16px;background:linear-gradient(135deg,var(--navy),var(--navy-2));color:#fff;border:none">
+    <div style="font-size:16px;font-weight:800;margin-bottom:6px">👋 سلام! این راهنمای برنامه‌ست</div>
+    <div style="font-size:13px;opacity:.9;line-height:1.9">روی هر بخش که کلیک کنی، توضیح کامل و نکته‌های ریزش باز می‌شه. لازم نیست همه رو یه‌جا بخونی — هر وقت تو یه قسمت گیر کردی، بیا همین‌جا و اون بخش رو باز کن.</div>
+  </div>
+  <div class="card" style="margin-bottom:16px">
+    <div class="card-title" style="margin-bottom:10px">💡 چند نکته‌ی کلی</div>
+    <ul style="margin:0;padding-inline-start:20px;font-size:12.5px;color:var(--muted);line-height:1.9">
+      <li style="margin-bottom:6px">هر جا آیکون ☎ می‌بینی، لمسش کن تا مستقیم تماس بگیری</li>
+      <li style="margin-bottom:6px">دکمه‌ی «📋 کپی مشخصات» رو روی هر کارت داری؛ متن آماده برای ارسال تو واتساپ/تلگرام می‌سازه</li>
+      <li style="margin-bottom:6px">فایل و مشتری‌های مشاوران دیگه رو می‌تونی تو تطبیق فایل ببینی، ولی شماره تماس مالکشون مخفیه</li>
+      <li style="margin-bottom:6px">حذف فایل یا مشتری فقط دست مدیره؛ تو همیشه می‌تونی ویرایش کنی</li>
+      <li>رنگ و ظاهر برنامه رو از «⚙️ ظاهر و تنظیمات» می‌تونی عوض کنی</li>
+    </ul>
+  </div>
+  <div class="section-title">📖 راهنمای بخش‌به‌بخش</div>
+  ${GUIDE_SECTIONS.map((s,i)=>guideSectionHtml(s,i)).join('')}
+  `;
+}
+
 function pageSettings(){
   const current = document.documentElement.getAttribute('data-theme') || 'light-warm';
   const themeCards = THEMES.map(t=>`
@@ -2758,7 +2825,7 @@ function agentPerformanceCardHtml(p, rank){
       ${perfMiniStat('اجاره', toFa(p.cRent.length))}
       ${perfMiniStat('فروش', toFa(p.cSale.length))}
       ${perfMiniStat('مشارکت', toFa(p.cMosh.length))}
-      ${perfMiniStat('بنگاه دیگر', toFa(p.cOther.length))}
+      ${perfMiniStat('املاک دیگر', toFa(p.cOther.length))}
     </div>
     <div class="price-box" style="margin-top:10px">
       <div class="main-price">کمیسیون کل: ${toFa(p.totalCommission)} تومان</div>
@@ -2934,7 +3001,7 @@ function contractCardHtml(item, kind){
       ${kind==='rent'?`<div><span class="k">مالک</span><span class="v">${esc(item.ownerName||'-')}</span></div><div><span class="k">مستاجر</span><span class="v">${esc(item.tenantName||'-')}</span></div>`:''}
       ${kind==='sale'?`<div><span class="k">فروشنده</span><span class="v">${esc(item.sellerName||'-')}</span></div><div><span class="k">خریدار</span><span class="v">${esc(item.buyerName||'-')}</span></div>`:''}
       ${kind==='mosharekat'?`<div><span class="k">مالک</span><span class="v">${esc(item.ownerName||'-')}</span></div><div><span class="k">سازنده</span><span class="v">${esc(item.builderName||'-')}</span></div>`:''}
-      ${kind==='other'?`<div><span class="k">بنگاه</span><span class="v">${esc(item.agencyName||'-')}</span></div><div><span class="k">مالک</span><span class="v">${esc(item.ownerName||'-')}</span></div>`:''}
+      ${kind==='other'?`<div><span class="k">املاک</span><span class="v">${esc(item.agencyName||'-')}</span></div><div><span class="k">مالک</span><span class="v">${esc(item.ownerName||'-')}</span></div>`:''}
       <div><span class="k">مشاور</span><span class="v">${esc(item.agentName||'-')}</span></div>
       <div><span class="k">تاریخ</span><span class="v">${faDate(item.startDate||item.contractDate)}</span></div>
     </div>
@@ -2965,7 +3032,7 @@ function pageAdminContracts(){
     <button class="tab-btn ${kind==='rent'?'active':''}" onclick="UI.tab.contractsKind='rent';renderApp();">🏠 رهن و اجاره</button>
     <button class="tab-btn ${kind==='sale'?'active':''}" onclick="UI.tab.contractsKind='sale';renderApp();">💰 خرید و فروش</button>
     <button class="tab-btn ${kind==='mosharekat'?'active':''}" onclick="UI.tab.contractsKind='mosharekat';renderApp();">🏗 مشارکت در ساخت</button>
-    <button class="tab-btn ${kind==='other'?'active':''}" onclick="UI.tab.contractsKind='other';renderApp();">🏢 قرارداد در بنگاه دیگر</button>
+    <button class="tab-btn ${kind==='other'?'active':''}" onclick="UI.tab.contractsKind='other';renderApp();">🏢 قرارداد در املاک دیگر</button>
     <div style="flex:1"></div>
     <button class="btn btn-primary btn-sm" onclick='openContractModal("${kind}")'>+ ثبت قرارداد</button>
   </div>
@@ -3095,6 +3162,7 @@ function pageCommissionCalculator(){
    ========================================================================= */
 const AGENT_NAV = [
   {id:'dashboard', label:'داشبورد', ic:'🏠'},
+  {id:'guide', label:'راهنمای برنامه', ic:'📘'},
   {id:'files_rent', label:'فایل‌ها (رهن و اجاره)', ic:'🔑'},
   {id:'files_sale', label:'فایل‌ها (فروش)', ic:'💰'},
   {id:'cust_rent', label:'مشتریان (رهن و اجاره)', ic:'👥'},
@@ -3141,12 +3209,13 @@ const PAGE_TITLES = {
   admin_dashboard:'داشبورد نظارتی مدیریت', agent_performance:'تحلیل عملکرد مشاوران', agent_accounts:'مدیریت حساب مشاوران', admin_files:'نظارت بر فایل‌های مشاوران', admin_customers:'نظارت بر مشتریان مشاوران',
   admin_matching:'تطبیق فایل کل دفتر', contracts:'مدیریت قراردادها', admin_mosharekat:'بانک مشارکت در ساخت', accounting:'حسابداری دفتر',
   commission_calc:'ماشین‌حساب کمیسیون',
-  my_activity:'ثبت فعالیت روزانه', attendance:'ورود و خروج روزانه', chat:'گفتگو'
+  my_activity:'ثبت فعالیت روزانه', attendance:'ورود و خروج روزانه', chat:'گفتگو', guide:'راهنمای برنامه'
 };
 
 function pageContent(){
   switch(UI.page){
     case 'dashboard': return pageAgentDashboard();
+    case 'guide': return SESSION.role==='admin' ? '<div class="empty-state">این بخش فقط برای مشاوران است</div>' : pageGuide();
     case 'files_rent': return pageAgentFiles('rent');
     case 'files_sale': return pageAgentFiles('sale');
     case 'cust_rent': return pageAgentCustomers('rent');
