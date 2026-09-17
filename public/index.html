@@ -607,11 +607,19 @@ async function apiFetch(path, opts){
   return body;
 }
 
+// نکته‌ی مهم (رفع باگ «فایل ثبت‌شده بعد از مدتی گم می‌شد»، ریشه‌ی واقعی):
+// قبلاً اگر یک درخواست GET برای گرفتن یک بخش از داده (مثلاً sl_files) به هر دلیلی
+// (قطعی موقت اینترنت، ری‌استارت لحظه‌ای سرور، تایم‌اوت و ...) شکست می‌خورد، این تابع
+// خطا را بی‌صدا می‌بلعید و null برمی‌گرداند؛ در loadAll() این null به آرایه‌ی خالی []
+// تبدیل می‌شد — یعنی یک خطای موقتِ شبکه، در نسخه‌ی محلی برنامه دقیقاً مثل «سرور گفته
+// هیچ فایلی نداری» تفسیر می‌شد و کل لیست روی صفحه خالی می‌شد. بدتر از آن، چون این اتفاق
+// داخل poll دوره‌ای رخ می‌داد، «امضای» آخرین وضعیت سرور را هم به‌روز می‌کرد، پس دفعه‌ی
+// بعد چون امضا با قبل یکی بود، برنامه اصلاً دوباره تلاش نمی‌کرد و همان‌جا (روی خالی)
+// برای همیشه می‌ماند تا کاربر صفحه را رفرش کند. راه‌حل: خطا را دیگر نبلع؛ اجازه بده به
+// بالا (loadAll) برسد تا آنجا تصمیم درست گرفته شود.
 async function storageGet(key){
-  try{
-    const r = await apiFetch('/api/storage/'+encodeURIComponent(key));
-    return (r && r.value!==null && r.value!==undefined) ? JSON.parse(r.value) : null;
-  }catch(e){ return null; }
+  const r = await apiFetch('/api/storage/'+encodeURIComponent(key));
+  return (r && r.value!==null && r.value!==undefined) ? JSON.parse(r.value) : null;
 }
 async function storageSet(key, value){
   try{
@@ -642,14 +650,26 @@ function stripTransientFields(item){
   return out;
 }
 async function loadAll(){
-  const [files, customers, mMelk, mSaz, sazBank, cRent, cSale, cMosh, cOther, settings, backupMeta, opportunities, officeCustomers, officeFiles, attendance, activityLogs] = await Promise.all([
-    storageGet(STORAGE_KEYS.files), storageGet(STORAGE_KEYS.customers), storageGet(STORAGE_KEYS.mMelk),
-    storageGet(STORAGE_KEYS.mSaz), storageGet(STORAGE_KEYS.sazBank), storageGet(STORAGE_KEYS.cRent),
-    storageGet(STORAGE_KEYS.cSale), storageGet(STORAGE_KEYS.cMosh), storageGet(STORAGE_KEYS.cOther),
-    storageGet(STORAGE_KEYS.settings), storageGet(STORAGE_KEYS.agentBackup),
-    storageGet(STORAGE_KEYS.opportunities), storageGet(STORAGE_KEYS.officeCustomers), storageGet(STORAGE_KEYS.officeFiles),
-    storageGet(STORAGE_KEYS.attendance), storageGet(STORAGE_KEYS.activityLogs)
-  ]);
+  // نکته‌ی مهم: تا زمانی که همه‌ی درخواست‌ها با موفقیت کامل نشوند، هیچ‌کدام از فیلدهای
+  // DB دست نمی‌خورَد. اگر یکی از این درخواست‌ها (مثلاً به‌خاطر قطعی موقت اینترنت) شکست
+  // بخورد، خطا به بالا (فراخواننده — poll دوره‌ای یا فرآیند ورود) منتقل می‌شود تا آن‌جا
+  // به‌جای «همه چیز را خالی نشان بده»، به‌سادگی دوباره تلاش شود؛ داده‌ی محلیِ درست و
+  // قبلی هرگز با یک نتیجه‌ی ناقص/خالی رونویسی نمی‌شود.
+  let results;
+  try{
+    results = await Promise.all([
+      storageGet(STORAGE_KEYS.files), storageGet(STORAGE_KEYS.customers), storageGet(STORAGE_KEYS.mMelk),
+      storageGet(STORAGE_KEYS.mSaz), storageGet(STORAGE_KEYS.sazBank), storageGet(STORAGE_KEYS.cRent),
+      storageGet(STORAGE_KEYS.cSale), storageGet(STORAGE_KEYS.cMosh), storageGet(STORAGE_KEYS.cOther),
+      storageGet(STORAGE_KEYS.settings), storageGet(STORAGE_KEYS.agentBackup),
+      storageGet(STORAGE_KEYS.opportunities), storageGet(STORAGE_KEYS.officeCustomers), storageGet(STORAGE_KEYS.officeFiles),
+      storageGet(STORAGE_KEYS.attendance), storageGet(STORAGE_KEYS.activityLogs)
+    ]);
+  }catch(e){
+    console.error('loadAll: دریافت داده از سرور ناموفق بود — داده‌ی محلی دست‌نخورده باقی ماند', e);
+    throw e;
+  }
+  const [files, customers, mMelk, mSaz, sazBank, cRent, cSale, cMosh, cOther, settings, backupMeta, opportunities, officeCustomers, officeFiles, attendance, activityLogs] = results;
   DB.files=(files||[]).map(f=>{ if(!f.status) f.status='active'; return f; }); DB.customers=customers||[]; DB.mMelk=mMelk||[]; DB.mSaz=mSaz||[]; DB.sazBank=sazBank||[];
   DB.cRent=cRent||[]; DB.cSale=cSale||[]; DB.cMosh=cMosh||[]; DB.cOther=cOther||[];
   DB.settings=settings||{ conversionRate:2.5, defaultFollowupDays:3 };
@@ -666,6 +686,17 @@ async function loadAll(){
   }
   await loadMessages();
   try{ const h = await fetch(API_BASE+'/api/health'); SERVER_HEALTH = await h.json(); }catch(e){ /* بی‌صدا رد شو */ }
+}
+// چند بار (با فاصله‌ی کوتاه) loadAll را امتحان می‌کند تا یک قطعی موقت شبکه هنگام ورود/بارگذاری
+// اول برنامه، کاربر را بی‌جهت به صفحه‌ی ورود برنگرداند یا با داده‌ی خالی مواجه نکند.
+async function loadAllWithRetry(maxAttempts){
+  maxAttempts = maxAttempts || 3;
+  let lastErr;
+  for(let i=0;i<maxAttempts;i++){
+    try{ await loadAll(); return; }
+    catch(e){ lastErr=e; if(i<maxAttempts-1) await new Promise(r=>setTimeout(r, 700*(i+1))); }
+  }
+  throw lastErr;
 }
 // رفع باگ «فایل ثبت‌شده بعد از مدتی پریده بود»: قبلاً اینجا کل DB[name] به‌جای آرایه‌ی
 // سرور نشانده می‌شد. اگر هم‌زمان (یا با فاصله‌ی چند ثانیه به‌خاطر کندی قبلی) یک مشاور
@@ -746,8 +777,10 @@ async function pollForUpdates(){
     const meta = await apiFetch('/api/meta');
     const snap = JSON.stringify(meta);
     if(snap===__lastMetaSnapshot) return; // هیچ چیزی عوض نشده — نیازی به دانلود کامل و رندر مجدد نیست
-    __lastMetaSnapshot = snap;
-    await loadAll();
+    await loadAll(); // اگر این خط شکست بخورد (throw کند)، اجرا به catch زیر می‌رود و __lastMetaSnapshot
+                      // به‌روز نمی‌شود؛ پس در فراخوانی بعدی (۶ ثانیه‌ی دیگر) دوباره تلاش می‌شود، به‌جای
+                      // اینکه یک شکست موقت برای همیشه به‌عنوان «هماهنگ» ثبت شود و داده هرگز درست نشود.
+    __lastMetaSnapshot = snap; // فقط وقتی داده‌ی کامل واقعاً با موفقیت دانلود شد، این را «هماهنگ» علامت بزن
     const newUnread = unreadChatCount();
     if(__lastUnreadChat!==null && newUnread>__lastUnreadChat){
       toast('📩 پیام جدید در گفتگو دریافت شد');
@@ -1753,8 +1786,12 @@ function todayStr(){ const d=new Date(); return d.getFullYear()+'-'+String(d.get
 function attendanceFields(){
   return [
     {key:'date', label:'تاریخ', type:'date', required:true},
-    {key:'checkIn', label:'ساعت ورود', type:'time'},
-    {key:'checkOut', label:'ساعت خروج', type:'time'},
+    {key:'__shift_morning_sep', label:'شیفت صبح', type:'section'},
+    {key:'morningCheckIn', label:'ساعت ورود (صبح)', type:'time'},
+    {key:'morningCheckOut', label:'ساعت خروج (صبح)', type:'time'},
+    {key:'__shift_afternoon_sep', label:'شیفت بعدازظهر', type:'section'},
+    {key:'afternoonCheckIn', label:'ساعت ورود (بعدازظهر)', type:'time'},
+    {key:'afternoonCheckOut', label:'ساعت خروج (بعدازظهر)', type:'time'},
     {key:'notes', label:'توضیحات', type:'textarea', span:'full'},
   ];
 }
@@ -1769,7 +1806,12 @@ function addAttendance(){
 }
 function editAttendance(id){
   const item = DB.attendance.find(x=>x.id===id); if(!item || item.agentName!==SESSION.name) return;
-  openFormModal('ویرایش تردد', attendanceFields(), item, async (data)=>{
+  // رکوردهای قدیمی فقط checkIn/checkOut داشتند (یک شیفت)؛ برای سازگاری در فرم ویرایش،
+  // آن‌ها را به‌عنوان مقدار اولیه‌ی شیفت صبح نشان بده (اگر مقدار جدید هنوز ثبت نشده)
+  const formData = Object.assign({}, item);
+  if(!formData.morningCheckIn && item.checkIn) formData.morningCheckIn = item.checkIn;
+  if(!formData.morningCheckOut && item.checkOut) formData.morningCheckOut = item.checkOut;
+  openFormModal('ویرایش تردد', attendanceFields(), formData, async (data)=>{
     Object.assign(item, data); item.updatedAt=nowIso();
     await saveCollection('attendance');
     toast('ذخیره شد ✓');
@@ -1796,12 +1838,16 @@ function pageAttendance(){
       ${agents.map(a=>`<option value="${esc(a)}" ${filterAgent===a?'selected':''}>${esc(a)}</option>`).join('')}
     </select>
   </div>`}
-  <div class="table-wrap"><table><thead><tr><th>مشاور</th><th>تاریخ</th><th>ورود</th><th>خروج</th><th>توضیحات</th>${isAdmin?'':'<th></th>'}</tr></thead><tbody>
-  ${list.length===0? `<tr><td colspan="6" style="text-align:center;padding:20px">رکوردی ثبت نشده است</td></tr>` :
-  list.map(a=>`<tr>
-    <td>${esc(a.agentName)}</td><td>${faDate(a.date)}</td><td>${esc(a.checkIn||'-')}</td><td>${esc(a.checkOut||'-')}</td><td>${esc(a.notes||'-')}</td>
+  <div class="table-wrap"><table><thead><tr><th>مشاور</th><th>تاریخ</th><th>ورود صبح</th><th>خروج صبح</th><th>ورود بعدازظهر</th><th>خروج بعدازظهر</th><th>توضیحات</th>${isAdmin?'':'<th></th>'}</tr></thead><tbody>
+  ${list.length===0? `<tr><td colspan="8" style="text-align:center;padding:20px">رکوردی ثبت نشده است</td></tr>` :
+  list.map(a=>{
+    // رکوردهای قدیمی فقط checkIn/checkOut داشتند (یک شیفت)؛ برای سازگاری، آن‌ها را به‌عنوان شیفت صبح نمایش بده
+    const mIn = a.morningCheckIn || a.checkIn, mOut = a.morningCheckOut || a.checkOut;
+    return `<tr>
+    <td>${esc(a.agentName)}</td><td>${faDate(a.date)}</td><td>${esc(mIn||'-')}</td><td>${esc(mOut||'-')}</td><td>${esc(a.afternoonCheckIn||'-')}</td><td>${esc(a.afternoonCheckOut||'-')}</td><td>${esc(a.notes||'-')}</td>
     ${isAdmin?'':`<td style="white-space:nowrap"><button class="btn btn-outline btn-sm" onclick="editAttendance('${a.id}')">✏️</button> <button class="btn btn-danger btn-sm" onclick="deleteAttendance('${a.id}')">🗑</button></td>`}
-  </tr>`).join('')}
+  </tr>`;
+  }).join('')}
   </tbody></table></div>`;
 }
 
@@ -2263,10 +2309,16 @@ function pageMosharekat(){
    صفحه بانک سازنده کلی
    ========================================================================= */
 function pageSazBank(){
-  let list = SESSION.role==='admin' ? DB.sazBank.slice() : DB.sazBank.filter(x=>x.agentName===SESSION.name);
-  const scopeKey='sazbank'; list = applySearchSortFilter(list, scopeKey, ['name','phone'], ()=>0);
+  let baseList = SESSION.role==='admin' ? DB.sazBank.slice() : DB.sazBank.filter(x=>x.agentName===SESSION.name);
+  const totalCount = baseList.length;
+  const scopeKey='sazbank'; let list = applySearchSortFilter(baseList, scopeKey, ['name','phone'], ()=>0);
+  const searchActive = (UI.search[scopeKey]||'').trim().length>0;
   return `${genericToolbarHtml(scopeKey,{searchHint:'نام سازنده'})}
-  <div style="margin-bottom:12px"><button class="btn btn-primary btn-sm" onclick="addSazBank()">+ سازنده جدید</button></div>
+  <div style="margin-bottom:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+    <button class="btn btn-primary btn-sm" onclick="addSazBank()">+ سازنده جدید</button>
+    <span class="badge badge-navy">👷 تعداد کل سازنده‌ها: ${toFa(totalCount)}</span>
+    ${searchActive? `<span class="badge badge-gold">نتایج جستجو: ${toFa(list.length)}</span>` : ''}
+  </div>
   ${list.length? `<div class="grid">${list.map(x=>`
     <div class="card"><div class="card-top"><div class="card-title">👷 ${esc(x.name)}</div><span class="badge badge-navy">${toFa(x.projectsCount||0)} پروژه</span></div>
     <a class="phone-link" href="tel:${esc(x.phone)}">☎ ${esc(x.phone)}</a>
@@ -3162,7 +3214,6 @@ function pageCommissionCalculator(){
    ========================================================================= */
 const AGENT_NAV = [
   {id:'dashboard', label:'داشبورد', ic:'🏠'},
-  {id:'guide', label:'راهنمای برنامه', ic:'📘'},
   {id:'files_rent', label:'فایل‌ها (رهن و اجاره)', ic:'🔑'},
   {id:'files_sale', label:'فایل‌ها (فروش)', ic:'💰'},
   {id:'cust_rent', label:'مشتریان (رهن و اجاره)', ic:'👥'},
@@ -3179,6 +3230,7 @@ const AGENT_NAV = [
   {id:'chat', label:'گفتگو با مدیر', ic:'💬'},
   {id:'backup', label:'بک‌آپ اطلاعات', ic:'💾'},
   {id:'settings', label:'ظاهر و تنظیمات', ic:'⚙️'},
+  {id:'guide', label:'راهنمای برنامه', ic:'📘'},
 ];
 const ADMIN_NAV = [
   {id:'admin_dashboard', label:'داشبورد نظارتی', ic:'🏛'},
@@ -3372,7 +3424,7 @@ async function doFirstSetup(){
     if(!r.ok){ toast(body.error==='already_setup'? 'سامانه قبلاً راه‌اندازی شده':'خطا در راه‌اندازی'); return; }
     TOKEN = body.token; localStorage.setItem('sl_token', TOKEN);
     SESSION = { role: body.account.role, name: body.account.name, username: body.account.username, accountId: body.account.id };
-    await loadAll();
+    await loadAllWithRetry();
     __lastUnreadChat = unreadChatCount();
     UI.page='admin_dashboard';
     renderApp();
@@ -3388,7 +3440,7 @@ async function doLogin(){
     if(!r.ok){ toast('نام کاربری یا رمز عبور اشتباه است'); return; }
     TOKEN = body.token; localStorage.setItem('sl_token', TOKEN);
     SESSION = { role: body.account.role, name: body.account.name, username: body.account.username, accountId: body.account.id };
-    await loadAll();
+    await loadAllWithRetry();
     __lastUnreadChat = unreadChatCount();
     UI.page = body.account.role==='admin'? 'admin_dashboard':'dashboard';
     renderApp();
@@ -3434,10 +3486,13 @@ async function saveNewAgentAccount(){
   if(!name||!username||!password){ toast('همه فیلدها را پر کنید'); return; }
   try{
     await apiFetch('/api/accounts', {method:'POST', body: JSON.stringify({name,username,password})});
-    toast('حساب مشاور ساخته شد ✓'); closeModal(); await loadAll(); renderApp();
+    toast('حساب مشاور ساخته شد ✓'); closeModal();
   }catch(e){
     toast(e.body && e.body.error==='username_taken' ? 'این نام کاربری قبلاً استفاده شده' : 'خطا در ساخت حساب');
+    return;
   }
+  try{ await loadAllWithRetry(); }catch(e){ /* حساب با موفقیت ساخته شد؛ فقط رفرش لیست موقتاً ناموفق بود، با poll بعدی درست می‌شود */ }
+  renderApp();
 }
 function editAgentAccount(id){
   const acc = DB.accounts.find(a=>a.id===id); if(!acc) return;
@@ -3464,10 +3519,13 @@ async function saveEditAgentAccount(id){
       [DB.files,DB.customers,DB.mMelk,DB.mSaz,DB.sazBank].forEach(coll=>coll.forEach(r=>{ if(r.agentName===oldName) r.agentName=newName; }));
       await Promise.all(['files','customers','mMelk','mSaz','sazBank'].map(saveCollection));
     }
-    toast('ذخیره شد ✓'); closeModal(); await loadAll(); renderApp();
+    toast('ذخیره شد ✓'); closeModal();
   }catch(e){
     toast(e.body && e.body.error==='username_taken' ? 'این نام کاربری قبلاً استفاده شده' : 'خطا در ذخیره');
+    return;
   }
+  try{ await loadAllWithRetry(); }catch(e){ /* تغییرات با موفقیت ذخیره شد؛ فقط رفرش لیست موقتاً ناموفق بود */ }
+  renderApp();
 }
 function resetAgentPassword(id){
   const acc = DB.accounts.find(a=>a.id===id); if(!acc) return;
@@ -3490,8 +3548,10 @@ async function deleteAgentAccount(id){
   if(!confirm('این حساب مشاور حذف شود؟ (اطلاعات فایل و مشتری او حذف نمی‌شود)')) return;
   try{
     await apiFetch('/api/accounts/'+id, {method:'DELETE'});
-    toast('حساب حذف شد'); await loadAll(); renderApp();
-  }catch(e){ toast('خطا در حذف حساب'); }
+    toast('حساب حذف شد');
+  }catch(e){ toast('خطا در حذف حساب'); return; }
+  try{ await loadAllWithRetry(); }catch(e){ /* حذف با موفقیت انجام شد؛ فقط رفرش لیست موقتاً ناموفق بود */ }
+  renderApp();
 }
 
 /* =========================================================================
@@ -3543,7 +3603,7 @@ async function saveMyAccount(){
       if(r.ok){
         const body = await r.json();
         SESSION = { role: body.account.role, name: body.account.name, username: body.account.username, accountId: body.account.id };
-        await loadAll();
+        await loadAllWithRetry();
         __lastUnreadChat = unreadChatCount();
         UI.page = SESSION.role==='admin'? 'admin_dashboard':'dashboard';
         renderApp();
