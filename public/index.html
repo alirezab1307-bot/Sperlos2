@@ -188,6 +188,38 @@ button,input,select,textarea{font-family:'Vazirmatn',Tahoma,Arial,sans-serif;}
 }
 .field input:focus,.field select:focus,.field textarea:focus{outline:none;border-color:var(--gold);box-shadow:0 0 0 3px rgba(176,141,79,.15);}
 .field input:hover,.field select:hover,.field textarea:hover{border-color:var(--gold-2);}
+
+/* ---------- تقویم شمسی (انتخاب‌گر تاریخ) ---------- */
+.jalali-date-field{position:relative;}
+.jalali-date-field input{cursor:pointer;background:var(--paper-2);caret-color:transparent;}
+.jalali-date-field .jf-ic{position:absolute;top:50%;transform:translateY(-50%);inset-inline-end:12px;pointer-events:none;color:var(--gold);font-size:15px;opacity:.9;}
+.jalali-picker-popup{
+  position:fixed;z-index:500;width:296px;max-width:calc(100vw - 16px);background:var(--paper-2);border-radius:var(--r-lg);
+  box-shadow:var(--sh-lg),0 0 0 1px var(--line);padding:14px;direction:rtl;font-family:'Vazirmatn',Tahoma,Arial,sans-serif;
+  animation:scaleIn .18s var(--ease-out) both;border-top:3px solid var(--gold);
+}
+.jp-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;}
+.jp-title{font-weight:800;font-size:14px;color:var(--ink);}
+.jp-nav{
+  width:30px;height:30px;border-radius:9px;border:1px solid var(--line);background:var(--paper);
+  color:var(--navy);font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center;
+  transition:.15s var(--ease);flex-shrink:0;
+}
+.jp-nav:hover{background:linear-gradient(135deg,var(--gold),var(--gold-2));color:var(--on-gold);border-color:var(--gold);transform:scale(1.06);}
+.jp-weekdays{display:grid;grid-template-columns:repeat(7,1fr);text-align:center;font-size:11px;color:var(--muted);font-weight:700;margin-bottom:5px;}
+.jp-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:3px;}
+.jp-cell{aspect-ratio:1;display:flex;align-items:center;justify-content:center;border-radius:9px;font-size:12.5px;cursor:pointer;color:var(--ink);transition:.15s var(--ease);}
+.jp-cell.jp-empty{cursor:default;}
+.jp-day:hover{background:rgba(176,141,79,.16);transform:scale(1.08);}
+.jp-today{border:1px solid var(--gold-2);font-weight:800;color:var(--gold);}
+.jp-selected{background:linear-gradient(135deg,var(--gold),var(--gold-2));color:var(--on-gold);font-weight:800;box-shadow:var(--sh-gold);}
+.jp-selected:hover{transform:none;}
+.jp-footer{display:flex;justify-content:space-between;margin-top:10px;padding-top:10px;border-top:1px solid var(--line);}
+.jp-quick{background:none;border:none;color:var(--emerald);font-size:12px;font-weight:700;cursor:pointer;padding:5px 9px;border-radius:7px;transition:.15s var(--ease);}
+.jp-quick:hover{background:var(--ok-bg);}
+.jp-clear{color:var(--danger);}
+.jp-clear:hover{background:var(--danger-bg);}
+
 .btn{
   display:inline-flex;align-items:center;justify-content:center;gap:6px;position:relative;overflow:hidden;
   padding:11px 18px;border-radius:10px;border:none;cursor:pointer;font-weight:700;font-size:14px;
@@ -320,6 +352,19 @@ button,input,select,textarea{font-family:'Vazirmatn',Tahoma,Arial,sans-serif;}
 }
 .toast.show{opacity:1;bottom:34px;transform:translateX(-50%) translateY(0) scale(1);}
 
+/* ---------- بنر دائمیِ «تغییرات ذخیره‌نشده» ----------
+   برخلاف toast که چند ثانیه دیده می‌شود و می‌تواند با toast بعدی (مثلاً «ذخیره شد ✓» که
+   بدون بررسی نتیجه‌ی واقعی ذخیره‌سازی نمایش داده می‌شود) پنهان شود، این بنر تا وقتی
+   تغییرات واقعاً روی سرور ذخیره نشده‌اند، ثابت روی صفحه می‌ماند. */
+.unsaved-banner{
+  position:fixed;top:0;right:0;left:0;z-index:400;background:linear-gradient(90deg,#7A3B1E,#9C5423);color:#FFF2E4;
+  padding:10px 16px;font-size:12.5px;font-weight:700;text-align:center;box-shadow:0 4px 16px rgba(0,0,0,.25);
+  transform:translateY(-110%);transition:transform .3s var(--ease-out);
+}
+.unsaved-banner.show{transform:translateY(0);}
+.unsaved-banner .dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:#FFD48A;margin-left:6px;animation:pulse 1.2s ease-in-out infinite;}
+@keyframes pulse{0%,100%{opacity:1;}50%{opacity:.35;}}
+
 .stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-bottom:18px;}
 .stat-card{background:var(--paper-2);border:1px solid var(--line);border-radius:16px;padding:16px;position:relative;overflow:hidden;
   box-shadow:var(--sh-sm);transition:transform .25s var(--ease-out), box-shadow .25s var(--ease-out);animation:fadeInUp .45s var(--ease-out) both;}
@@ -404,6 +449,7 @@ tr:last-child td{border-bottom:none;}
 <div id="login-screen"></div>
 <div id="app-screen"></div>
 <div id="overlay-root" class="overlay"></div>
+<div id="unsaved-banner" class="unsaved-banner"><span class="dot"></span>برخی تغییرات هنوز روی سرور ذخیره نشده‌اند — در حال تلاش مجدد برای اتصال...</div>
 <div id="toast" class="toast"></div>
 
 <script>
@@ -514,6 +560,185 @@ function faDateTime(iso){ if(!iso) return '—'; try{ return new Date(iso).toLoc
 function addDays(iso, days){ const d = iso? new Date(iso): new Date(); d.setDate(d.getDate()+Number(days||0)); return d.toISOString(); }
 function daysBetween(iso1, iso2){ const a=new Date(iso1), b=new Date(iso2); return Math.round((b-a)/(1000*60*60*24)); }
 function toFa(n){ return Number(n||0).toLocaleString('en-US'); }
+
+/* =========================================================================
+   تقویم شمسی (جلالی) — الگوریتم استاندارد و دقیق تبدیل میلادی↔شمسی
+   بر پایه‌ی شماره روز ژولیوسی (JDN)، بدون هیچ کتابخانه‌ی بیرونی
+   ========================================================================= */
+function jdDiv(a,b){ return ~~(a/b); }
+function jdMod(a,b){ return a - ~~(a/b)*b; }
+const JALALI_BREAKS = [-61,9,38,199,426,686,756,818,1111,1181,1210,1635,2060,2097,2192,2262,2324,2394,2456,3178];
+function jalCal(jy){
+  const bl = JALALI_BREAKS.length;
+  const gy = jy + 621;
+  let leapJ = -14, jp = JALALI_BREAKS[0];
+  if (jy < jp || jy >= JALALI_BREAKS[bl-1]) return { leap:0, gy, march:20 }; // خارج از بازه: مقدار امن پیش‌فرض
+  let jump = 0;
+  for (let i = 1; i < bl; i++) {
+    const jm = JALALI_BREAKS[i];
+    jump = jm - jp;
+    if (jy < jm) break;
+    leapJ += jdDiv(jump, 33) * 8 + jdDiv(jdMod(jump, 33), 4);
+    jp = jm;
+  }
+  let n = jy - jp;
+  leapJ += jdDiv(n, 33) * 8 + jdDiv(jdMod(n, 33) + 3, 4);
+  if (jdMod(jump, 33) === 4 && jump - n === 4) leapJ += 1;
+  const leapG = jdDiv(gy, 4) - jdDiv((jdDiv(gy, 100) + 1) * 3, 4) - 150;
+  const march = 20 + leapJ - leapG;
+  if (jump - n < 6) n = n - jump + jdDiv(jump + 4, 33) * 33;
+  let leap = jdMod(jdMod(n + 1, 33) - 1, 4);
+  if (leap === -1) leap = 4;
+  return { leap, gy, march };
+}
+function isLeapJalaliYear(jy){ return jalCal(jy).leap === 0; }
+function jalaliMonthLength(jy, jm){ if(jm<=6) return 31; if(jm<=11) return 30; return isLeapJalaliYear(jy)?30:29; }
+function gregorianToJdn(gy, gm, gd){
+  let d = jdDiv((gy + jdDiv(gm - 8, 6) + 100100) * 1461, 4) + jdDiv(153 * jdMod(gm + 9, 12) + 2, 5) + gd - 34840408;
+  d = d - jdDiv(jdDiv(gy + 100100 + jdDiv(gm - 8, 6), 100) * 3, 4) + 752;
+  return d;
+}
+function jdnToGregorian(jdn){
+  let j = 4 * jdn + 139361631;
+  j = j + jdDiv(jdDiv(4 * jdn + 183187720, 146097) * 3, 4) * 4 - 3908;
+  const i = jdDiv(jdMod(j, 1461), 4) * 5 + 308;
+  const gd = jdDiv(jdMod(i, 153), 5) + 1;
+  const gm = jdMod(jdDiv(i, 153), 12) + 1;
+  const gy = jdDiv(j, 1461) - 100100 + jdDiv(8 - gm, 6);
+  return [gy, gm, gd];
+}
+function jalaliToJdn(jy, jm, jd){
+  const r = jalCal(jy);
+  return gregorianToJdn(r.gy, 3, r.march) + (jm - 1) * 31 - jdDiv(jm, 7) * (jm - 7) + jd - 1;
+}
+function jdnToJalali(jdn){
+  const gy = jdnToGregorian(jdn)[0];
+  let jy = gy - 621;
+  const r = jalCal(jy);
+  const jdn1f = gregorianToJdn(gy, 3, r.march);
+  let k = jdn - jdn1f, jm, jd;
+  if (k >= 0) {
+    if (k <= 185) { jm = 1 + jdDiv(k, 31); jd = jdMod(k, 31) + 1; return [jy, jm, jd]; }
+    k -= 186;
+  } else {
+    jy -= 1; k += 179;
+    if (r.leap === 1) k += 1;
+  }
+  jm = 7 + jdDiv(k, 30); jd = jdMod(k, 30) + 1;
+  return [jy, jm, jd];
+}
+function gregorianToJalali(gy, gm, gd){ return jdnToJalali(gregorianToJdn(gy, gm, gd)); }
+function jalaliToGregorian(jy, jm, jd){ return jdnToGregorian(jalaliToJdn(jy, jm, jd)); }
+function jalaliFirstDayOfWeek(jy, jm){ // ۰=شنبه ... ۶=جمعه
+  const [gy,gm,gd] = jalaliToGregorian(jy, jm, 1);
+  const jsDay = new Date(Date.UTC(gy, gm-1, gd)).getUTCDay(); // ۰=یکشنبه در جاوااسکریپت
+  return (jsDay + 1) % 7;
+}
+function toPersianDigits(x){ const map={'0':'۰','1':'۱','2':'۲','3':'۳','4':'۴','5':'۵','6':'۶','7':'۷','8':'۸','9':'۹'}; return String(x).replace(/[0-9]/g, d=>map[d]); }
+function isoToJalali(iso){
+  if(!iso) return null;
+  const parts = String(iso).slice(0,10).split('-').map(Number);
+  if(parts.length<3 || parts.some(n=>isNaN(n))) return null;
+  return gregorianToJalali(parts[0], parts[1], parts[2]);
+}
+function isoToJalaliDisplay(iso){
+  const j = isoToJalali(iso);
+  if(!j) return '';
+  return toPersianDigits(j[0])+'/'+toPersianDigits(String(j[1]).padStart(2,'0'))+'/'+toPersianDigits(String(j[2]).padStart(2,'0'));
+}
+const JALALI_MONTHS = ['فروردین','اردیبهشت','خرداد','تیر','مرداد','شهریور','مهر','آبان','آذر','دی','بهمن','اسفند'];
+const JALALI_WEEKDAYS = ['ش','ی','د','س','چ','پ','ج'];
+
+/* ---------- تقویم شمسیِ باز‌شونده (پاپ‌آپ) برای انتخاب تاریخ ---------- */
+let __jalaliPicker = null;
+function openJalaliPicker(inputEl){
+  if(__jalaliPicker && __jalaliPicker.inputEl===inputEl){ closeJalaliPicker(); return; }
+  const key = inputEl.getAttribute('data-key');
+  const iso = (__formState && __formState[key]) || '';
+  const j = isoToJalali(iso) || isoToJalali(todayStr());
+  __jalaliPicker = { key, inputEl, viewYear:j[0], viewMonth:j[1], selYear: iso? j[0]:null, selMonth: iso? j[1]:null, selDay: iso? j[2]:null };
+  renderJalaliPicker();
+  document.addEventListener('mousedown', jalaliPickerOutsideClick, true);
+  window.addEventListener('resize', positionJalaliPicker);
+  window.addEventListener('scroll', positionJalaliPicker, true);
+}
+function renderJalaliPicker(){
+  const P = __jalaliPicker; if(!P) return;
+  let el = document.getElementById('jalali-picker-popup');
+  if(!el){ el = document.createElement('div'); el.id='jalali-picker-popup'; el.className='jalali-picker-popup'; document.body.appendChild(el); }
+  const daysInMonth = jalaliMonthLength(P.viewYear, P.viewMonth);
+  const firstDow = jalaliFirstDayOfWeek(P.viewYear, P.viewMonth);
+  const todayJ = isoToJalali(todayStr());
+  let cells = '';
+  for(let i=0;i<firstDow;i++) cells += `<div class="jp-cell jp-empty"></div>`;
+  for(let d=1; d<=daysInMonth; d++){
+    const isToday = todayJ[0]===P.viewYear && todayJ[1]===P.viewMonth && todayJ[2]===d;
+    const isSel = P.selYear===P.viewYear && P.selMonth===P.viewMonth && P.selDay===d;
+    cells += `<div class="jp-cell jp-day ${isToday?'jp-today':''} ${isSel?'jp-selected':''}" onclick="pickJalaliDay(${d})">${toPersianDigits(d)}</div>`;
+  }
+  el.innerHTML = `
+    <div class="jp-header">
+      <button type="button" class="jp-nav" onclick="jalaliPickerNav(1)" title="ماه بعد">‹</button>
+      <div class="jp-title">${JALALI_MONTHS[P.viewMonth-1]} ${toPersianDigits(P.viewYear)}</div>
+      <button type="button" class="jp-nav" onclick="jalaliPickerNav(-1)" title="ماه قبل">›</button>
+    </div>
+    <div class="jp-weekdays">${JALALI_WEEKDAYS.map(w=>`<div>${w}</div>`).join('')}</div>
+    <div class="jp-grid">${cells}</div>
+    <div class="jp-footer">
+      <button type="button" class="jp-quick" onclick="jalaliPickerToday()">📍 امروز</button>
+      <button type="button" class="jp-quick jp-clear" onclick="jalaliPickerClear()">پاک کردن</button>
+    </div>`;
+  el.style.visibility='hidden'; el.style.display='block';
+  requestAnimationFrame(()=>{ positionJalaliPicker(); el.style.visibility='visible'; });
+}
+function positionJalaliPicker(){
+  const P = __jalaliPicker; const el = document.getElementById('jalali-picker-popup');
+  if(!P || !el || !P.inputEl || !document.body.contains(P.inputEl)){ closeJalaliPicker(); return; }
+  const r = P.inputEl.getBoundingClientRect();
+  const popW = el.offsetWidth || 296, popH = el.offsetHeight || 340;
+  let top = r.bottom + 8, left = r.left;
+  if(top + popH > window.innerHeight - 8) top = Math.max(8, r.top - popH - 8);
+  if(left + popW > window.innerWidth - 8) left = Math.max(8, window.innerWidth - popW - 8);
+  el.style.top = top+'px'; el.style.left = left+'px';
+}
+function jalaliPickerNav(dir){
+  const P = __jalaliPicker; if(!P) return;
+  P.viewMonth += dir;
+  if(P.viewMonth>12){ P.viewMonth=1; P.viewYear++; }
+  if(P.viewMonth<1){ P.viewMonth=12; P.viewYear--; }
+  renderJalaliPicker();
+}
+function pickJalaliDay(d){
+  const P = __jalaliPicker; if(!P) return;
+  const [gy,gm,gd] = jalaliToGregorian(P.viewYear, P.viewMonth, d);
+  const iso = gy+'-'+String(gm).padStart(2,'0')+'-'+String(gd).padStart(2,'0');
+  applyJalaliDateToField(iso);
+}
+function jalaliPickerToday(){ applyJalaliDateToField(todayStr()); }
+function jalaliPickerClear(){ applyJalaliDateToField(''); }
+function applyJalaliDateToField(iso){
+  const P = __jalaliPicker; if(!P) return;
+  __formState[P.key] = iso;
+  if(P.inputEl){ P.inputEl.value = iso? isoToJalaliDisplay(iso) : ''; P.inputEl.dataset.iso = iso||''; }
+  if(typeof recomputeForm==='function') recomputeForm();
+  closeJalaliPicker();
+}
+function jalaliPickerOutsideClick(e){
+  const el = document.getElementById('jalali-picker-popup');
+  if(!el) return;
+  if(el.contains(e.target)) return;
+  if(e.target && e.target.hasAttribute && e.target.hasAttribute('data-jalali')) return; // کلیک روی خودِ اینپوت را دست‌نخورده بگذار (toggle خودش مدیریت می‌شود)
+  closeJalaliPicker();
+}
+function closeJalaliPicker(){
+  const el = document.getElementById('jalali-picker-popup');
+  if(el) el.remove();
+  __jalaliPicker = null;
+  document.removeEventListener('mousedown', jalaliPickerOutsideClick, true);
+  window.removeEventListener('resize', positionJalaliPicker);
+  window.removeEventListener('scroll', positionJalaliPicker, true);
+}
+
 function esc(s){ if(s===undefined||s===null) return ''; return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
 /* ---------- عدد به حروف فارسی ---------- */
@@ -670,16 +895,27 @@ async function loadAll(){
     throw e;
   }
   const [files, customers, mMelk, mSaz, sazBank, cRent, cSale, cMosh, cOther, settings, backupMeta, opportunities, officeCustomers, officeFiles, attendance, activityLogs] = results;
-  DB.files=(files||[]).map(f=>{ if(!f.status) f.status='active'; return f; }); DB.customers=customers||[]; DB.mMelk=mMelk||[]; DB.mSaz=mSaz||[]; DB.sazBank=sazBank||[];
-  DB.cRent=cRent||[]; DB.cSale=cSale||[]; DB.cMosh=cMosh||[]; DB.cOther=cOther||[];
-  DB.settings=settings||{ conversionRate:2.5, defaultFollowupDays:3 };
-  DB.backupMeta=backupMeta||{};
-  DB.opportunities=opportunities||[]; DB.officeCustomers=officeCustomers||[];
-  DB.officeFiles=(officeFiles||[]).map(f=>{ if(!f.status) f.status='active'; return f; });
-  DB.attendance=attendance||[]; DB.activityLogs=activityLogs||[];
-  ARRAY_COLLECTIONS.forEach(snapshotCollection); // این لحظه، مبنای هماهنگ با سرور برای محاسبه‌ی تغییرات بعدی است
-  __syncedObjectSnapshot.settings = Object.assign({}, DB.settings);
-  __syncedObjectSnapshot.backupMeta = Object.assign({}, DB.backupMeta);
+  // نکته‌ی دیگر: اگر مجموعه‌ای در همین لحظه تغییرِ محلیِ ذخیره‌نشده دارد (مثلاً به‌خاطر
+  // قطعی موقت اینترنت هنوز روی سرور ثبت نشده و در پس‌زمینه در حال تلاش مجدد است)، داده‌ی
+  // تازه‌ی سرور — که هنوز این تغییر را ندارد — نباید جایگزین نسخه‌ی محلی شود؛ وگرنه همان
+  // تغییرِ در حال ارسال، با رفرشِ این poll برای همیشه از حافظه‌ی مرورگر هم پاک می‌شد.
+  const keep = (name, freshValue, transform) => {
+    if(__unsavedCollections && __unsavedCollections.has(name)) return; // نسخه‌ی محلی (با تغییر ذخیره‌نشده) دست‌نخورده می‌ماند
+    DB[name] = transform ? transform(freshValue) : (freshValue||[]);
+  };
+  keep('files', files, v=>(v||[]).map(f=>{ if(!f.status) f.status='active'; return f; }));
+  keep('customers', customers); keep('mMelk', mMelk); keep('mSaz', mSaz); keep('sazBank', sazBank);
+  keep('cRent', cRent); keep('cSale', cSale); keep('cMosh', cMosh); keep('cOther', cOther);
+  if(!(__unsavedCollections && __unsavedCollections.has('settings'))) DB.settings=settings||{ conversionRate:2.5, defaultFollowupDays:3 };
+  if(!(__unsavedCollections && __unsavedCollections.has('backupMeta'))) DB.backupMeta=backupMeta||{};
+  keep('opportunities', opportunities); keep('officeCustomers', officeCustomers);
+  keep('officeFiles', officeFiles, v=>(v||[]).map(f=>{ if(!f.status) f.status='active'; return f; }));
+  keep('attendance', attendance); keep('activityLogs', activityLogs);
+  // مجموعه‌ای که تغییرِ محلیِ ذخیره‌نشده دارد را دوباره «هماهنگ» علامت نزن، وگرنه همان
+  // تغییر در محاسبه‌ی تفاوتِ saveCollection دفعه‌ی بعد نادیده گرفته می‌شود.
+  ARRAY_COLLECTIONS.forEach(name=>{ if(!__unsavedCollections.has(name)) snapshotCollection(name); });
+  if(!__unsavedCollections.has('settings')) __syncedObjectSnapshot.settings = Object.assign({}, DB.settings);
+  if(!__unsavedCollections.has('backupMeta')) __syncedObjectSnapshot.backupMeta = Object.assign({}, DB.backupMeta);
   // لیست حساب مشاوران فقط برای مدیر از API اختصاصی خوانده می‌شود
   if(SESSION && SESSION.role==='admin'){
     try{ const r = await apiFetch('/api/accounts'); DB.accounts = r.accounts||[]; }catch(e){ DB.accounts = DB.accounts||[]; }
@@ -698,21 +934,62 @@ async function loadAllWithRetry(maxAttempts){
   }
   throw lastErr;
 }
-// رفع باگ «فایل ثبت‌شده بعد از مدتی پریده بود»: قبلاً اینجا کل DB[name] به‌جای آرایه‌ی
-// سرور نشانده می‌شد. اگر هم‌زمان (یا با فاصله‌ی چند ثانیه به‌خاطر کندی قبلی) یک مشاور
-// دیگر هم چیزی در همان مجموعه ثبت/ویرایش می‌کرد، هرکدام دیرتر ذخیره می‌شد، تغییرات
-// آن‌یکی را که در نسخه‌ی محلی‌اش نبود کامل پاک می‌کرد. الان به‌جای «کل آرایه»، فقط
-// «چه چیزی از آخرین هماهنگی تغییر کرده» (اضافه/ویرایش/حذف) به سرور فرستاده می‌شود؛
-// سرور هم این تغییرات را روی آخرین نسخه‌ی خودش اعمال می‌کند، نه نسخه‌ی قدیمیِ کلاینت —
-// پس تغییرات هم‌زمانِ بقیه هرگز رونویسی نمی‌شود.
-async function saveCollection(name){
-  if(name==='accounts') return; // حساب‌ها از مسیر اختصاصی /api/accounts مدیریت می‌شوند، نه اینجا
+// ادامه‌ی رفع باگ «فایل ثبت‌شده بعد از مدتی پریده بود»: با رفع باگ رقابتِ هم‌زمانی (بالا)
+// و رفع باگِ خالی‌شدنِ لیست هنگام خواندن (پایین‌تر، در loadAll)، یک حفره‌ی دیگر باقی
+// می‌ماند: اگر خودِ درخواستِ «ذخیره» به‌خاطر قطعی موقت اینترنت یا ری‌استارت لحظه‌ای سرور
+// شکست بخورد، پیش‌تر این تابع فقط یک toast کوتاه نشان می‌داد که بلافاصله با toast
+// «... ذخیره شد ✓»ی خودِ فراخواننده (که بدون بررسی نتیجه نشان داده می‌شود) پنهان می‌شد —
+// کاربر فکر می‌کرد ذخیره شده، در حالی که فقط در حافظه‌ی محلی مرورگرش بود. چند ساعت بعد یا
+// بعد از ورود دوباره، همان تغییر واقعاً هرگز روی سرور نبود. راه‌حل: چند تلاش خودکار با
+// فاصله‌ی افزایشی، و اگر باز هم ناموفق ماند، یک بنر دائمی (نه toast زودگذر) که تا موفقیتِ
+// نهایی روی صفحه می‌ماند و در پس‌زمینه هم مرتب دوباره تلاش می‌کند.
+let __unsavedCollections = new Set();
+function updateUnsavedBanner(){
+  const el = document.getElementById('unsaved-banner');
+  if(el) el.classList.toggle('show', __unsavedCollections.size>0);
+}
+async function sleep(ms){ return new Promise(r=>setTimeout(r, ms)); }
+async function attemptWithRetry(doRequest){
+  const delays = [800, 2000, 5000, 10000]; // مجموعاً حدود ۱۸ ثانیه فرصت برای برگشتِ اتصال، قبل از اعلام شکست نهایی
+  for(let i=0;i<delays.length;i++){
+    try{ await doRequest(); return true; }
+    catch(e){
+      // اگر علتِ شکست انقضای نشست (۴۰۱) باشد، منتظر ماندن با تاخیرِ فزاینده فایده‌ای ندارد؛
+      // apiFetch خودش کاربر را به صفحه‌ی ورود می‌فرستد. تلاش پس‌زمینه (که این تابع را
+      // دوباره صدا می‌زند) بعد از ورود دوباره و گرفتن توکن تازه، خودش موفق خواهد شد.
+      if(e && e.message==='unauthorized') return false;
+      await sleep(delays[i]);
+    }
+  }
+  try{ await doRequest(); return true; }catch(e){ return false; }
+}
+const __bgRetryTimers = {};
+function scheduleBackgroundRetry(name){
+  if(__bgRetryTimers[name]) return; // برای هر مجموعه فقط یک تلاشِ پس‌زمینه‌ی فعال کافی است
+  __bgRetryTimers[name] = setInterval(async ()=>{
+    const ok = await saveCollection(name, true);
+    if(ok){
+      clearInterval(__bgRetryTimers[name]); delete __bgRetryTimers[name];
+      toast('اتصال دوباره برقرار شد — تغییرات ذخیره شد ✓');
+      renderApp();
+    }
+  }, 15000);
+}
+async function saveCollection(name, isBackgroundRetry){
+  if(name==='accounts') return true; // حساب‌ها از مسیر اختصاصی /api/accounts مدیریت می‌شوند، نه اینجا
   const map={ files:STORAGE_KEYS.files, customers:STORAGE_KEYS.customers, mMelk:STORAGE_KEYS.mMelk, mSaz:STORAGE_KEYS.mSaz,
     sazBank:STORAGE_KEYS.sazBank, cRent:STORAGE_KEYS.cRent, cSale:STORAGE_KEYS.cSale, cMosh:STORAGE_KEYS.cMosh,
     cOther:STORAGE_KEYS.cOther, settings:STORAGE_KEYS.settings, backupMeta:STORAGE_KEYS.agentBackup,
     opportunities:STORAGE_KEYS.opportunities, officeCustomers:STORAGE_KEYS.officeCustomers, officeFiles:STORAGE_KEYS.officeFiles,
     attendance:STORAGE_KEYS.attendance, activityLogs:STORAGE_KEYS.activityLogs };
   const key = map[name];
+  const onFail = ()=>{
+    if(!isBackgroundRetry){
+      __unsavedCollections.add(name); updateUnsavedBanner();
+      scheduleBackgroundRetry(name);
+    }
+  };
+  const onSuccess = ()=>{ __unsavedCollections.delete(name); updateUnsavedBanner(); };
   if(!ARRAY_COLLECTIONS.includes(name)){
     // تنظیمات و متادیتای بک‌آپ: آبجکت ساده هستند (نه آرایه). به همان دلیل بالا، به‌جای
     // رونویسی کل آبجکت، فقط کلیدهایی که واقعاً تغییر کرده‌اند merge می‌شوند.
@@ -722,16 +999,12 @@ async function saveCollection(name){
     Object.keys(currentObj).forEach(k=>{
       if(JSON.stringify(currentObj[k]) !== JSON.stringify(beforeObj[k])) patch[k] = currentObj[k];
     });
-    if(Object.keys(patch).length===0) return true;
-    try{
-      await apiFetch('/api/storage/'+encodeURIComponent(key)+'/merge', {method:'PATCH', body: JSON.stringify({patch})});
-      __syncedObjectSnapshot[name] = Object.assign({}, currentObj);
-      return true;
-    }catch(e){
-      console.error('merge save failed', key, e);
-      toast('خطا در ذخیره‌سازی روی سرور');
-      return false;
-    }
+    if(Object.keys(patch).length===0){ onSuccess(); return true; }
+    const ok = await attemptWithRetry(()=>apiFetch('/api/storage/'+encodeURIComponent(key)+'/merge', {method:'PATCH', body: JSON.stringify({patch})}));
+    if(ok){ __syncedObjectSnapshot[name] = Object.assign({}, currentObj); onSuccess(); return true; }
+    console.error('merge save failed after retries', key);
+    onFail();
+    return false;
   }
   const before = __syncedSnapshot[name] || new Map();
   const current = DB[name] || [];
@@ -748,16 +1021,12 @@ async function saveCollection(name){
   });
   const removedIds = [];
   before.forEach((_, id)=>{ if(!currentIds.has(id)) removedIds.push(id); });
-  if(!added.length && !updated.length && !removedIds.length) return true; // چیزی تغییر نکرده، نیازی به درخواست نیست
-  try{
-    await apiFetch('/api/storage/'+encodeURIComponent(key)+'/batch', {method:'PATCH', body: JSON.stringify({added, updated, removedIds})});
-    snapshotCollection(name);
-    return true;
-  }catch(e){
-    console.error('batch save failed', key, e);
-    toast('خطا در ذخیره‌سازی روی سرور');
-    return false;
-  }
+  if(!added.length && !updated.length && !removedIds.length){ onSuccess(); return true; } // چیزی تغییر نکرده، نیازی به درخواست نیست
+  const ok = await attemptWithRetry(()=>apiFetch('/api/storage/'+encodeURIComponent(key)+'/batch', {method:'PATCH', body: JSON.stringify({added, updated, removedIds})}));
+  if(ok){ snapshotCollection(name); onSuccess(); return true; }
+  console.error('batch save failed after retries', key);
+  onFail();
+  return false;
 }
 
 
@@ -994,8 +1263,14 @@ function agentShareAmountFor(item, agentName){
   return found ? found.amount : 0;
 }
 
-function contractFields(kind){
+function contractFields(kind, currentAgentName){
   // kind: rent | sale | mosharekat | other
+  // نام مشاورِ ثبت‌شده‌ی قبلی (حتی اگر دیگر در فهرست فعلیِ مشاوران نباشد، مثلاً به‌خاطر
+  // تایپوی قدیمی یا حذف حساب) هم به گزینه‌ها اضافه می‌شود تا با باز کردن یک قرارداد
+  // قدیمی برای ویرایش، مقدارش گم یا خالی نشود.
+  const agentRoster = agentRosterForPerformance();
+  const agentOptions = (currentAgentName && !agentRoster.includes(currentAgentName))
+    ? [currentAgentName, ...agentRoster] : agentRoster;
   if(kind==='rent'){
     return [
       {key:'address', label:'آدرس ملک', type:'textarea', required:true, span:'full'},
@@ -1007,7 +1282,7 @@ function contractFields(kind){
       {key:'ejarePrice', label:'اجاره ماهیانه (تومان)', type:'number', price:true},
       {key:'startDate', label:'تاریخ شروع قرارداد', type:'date', required:true},
       {key:'endDate', label:'تاریخ پایان قرارداد', type:'date', required:true},
-      {key:'agentName', label:'مشاور مربوطه', type:'text'},
+      {key:'agentName', label:'مشاور مربوطه', type:'select', options: agentOptions, required:true},
       {key:'__c_sep', label:'کمیسیون', type:'section'},
       {key:'commissionTotal', label:'کمیسیون دریافتی کل (تومان) — محاسبه‌ی خودکار', type:'computed', showIf:d=>!d.manualCommission},
       {key:'manualCommission', label:'ورود دستی مبلغ کمیسیون (به‌جای محاسبه‌ی خودکار)', type:'checkbox'},
@@ -1027,7 +1302,7 @@ function contractFields(kind){
       {key:'buyerPhone', label:'شماره خریدار', type:'tel'},
       {key:'totalPrice', label:'مبلغ کل معامله (تومان)', type:'number', price:true},
       {key:'contractDate', label:'تاریخ قرارداد', type:'date', required:true},
-      {key:'agentName', label:'مشاور مربوطه', type:'text'},
+      {key:'agentName', label:'مشاور مربوطه', type:'select', options: agentOptions, required:true},
       {key:'__c_sep', label:'کمیسیون', type:'section'},
       {key:'commissionTotal', label:'کمیسیون دریافتی کل (تومان) — محاسبه‌ی خودکار', type:'computed', showIf:d=>!d.manualCommission},
       {key:'manualCommission', label:'ورود دستی مبلغ کمیسیون (به‌جای محاسبه‌ی خودکار)', type:'checkbox'},
@@ -1045,7 +1320,7 @@ function contractFields(kind){
       {key:'builderPhone', label:'شماره سازنده', type:'tel'},
       {key:'contractDate', label:'تاریخ قرارداد', type:'date', required:true},
       {key:'terms', label:'شرایط و نسبت مشارکت', type:'textarea', span:'full'},
-      {key:'agentName', label:'مشاور مربوطه', type:'text'},
+      {key:'agentName', label:'مشاور مربوطه', type:'select', options: agentOptions, required:true},
       {key:'__c_sep', label:'کمیسیون', type:'section'},
       {key:'commissionTotal', label:'کمیسیون دریافتی کل (تومان)', type:'number', price:true},
       {key:'agentSharePercent', label:'سهم مشاور (٪)', type:'number'},
@@ -1086,7 +1361,17 @@ function inputHtml(f, val){
     const shown = (v!==''&&v!==undefined&&v!==null) ? toFa(v) : '';
     return `<div class="field ${f.span==='full'?'full':''}"><label>${esc(f.label)}${f.required?' *':''}</label><input data-key="${f.key}" data-price="1" type="text" inputmode="numeric" placeholder="مثال: 9,600,000" value="${esc(shown)}"><div class="price-live" data-live="${f.key}" style="font-size:11px;color:var(--gold);margin-top:5px;line-height:1.7;min-height:14px"></div></div>`;
   }
-  const type = f.type==='number'?'number':(f.type==='tel'?'tel':(f.type==='date'?'date':(f.type==='time'?'time':'text')));
+  if(f.type==='date'){
+    const iso = v || '';
+    const shown = iso? isoToJalaliDisplay(iso) : '';
+    return `<div class="field ${f.span==='full'?'full':''}"><label>${esc(f.label)}${f.required?' *':''}</label>
+      <div class="jalali-date-field">
+        <input data-key="${f.key}" data-jalali="1" data-iso="${esc(iso)}" type="text" readonly placeholder="انتخاب تاریخ" value="${esc(shown)}" onclick="openJalaliPicker(this)">
+        <span class="jf-ic">📅</span>
+      </div>
+    </div>`;
+  }
+  const type = f.type==='number'?'number':(f.type==='tel'?'tel':(f.type==='time'?'time':'text'));
   return `<div class="field ${f.span==='full'?'full':''}"><label>${esc(f.label)}${f.required?' *':''}</label><input data-key="${f.key}" type="${type}" value="${esc(v)}"></div>`;
 }
 
@@ -1144,6 +1429,7 @@ function recomputeForm(){
 }
 
 function openFormModal(title, fields, initialData, onSave, extraHtml){
+  closeJalaliPicker();
   __formFields = fields; __formState = Object.assign({}, initialData||{}); __formOnSave = onSave;
   const root = document.getElementById('overlay-root');
   const body = fields.map(f=>inputHtml(f, __formState[f.key])).join('');
@@ -1191,6 +1477,7 @@ function openFormModal(title, fields, initialData, onSave, extraHtml){
   };
 }
 function closeModal(){
+  closeJalaliPicker();
   document.getElementById('overlay-root').classList.remove('show');
   document.getElementById('overlay-root').innerHTML='';
 }
@@ -1653,9 +1940,10 @@ function openContractModal(kind, existing){
   }
   const photos = (data.photos||[]).slice();
   const showAgentShares = kind==='rent' || kind==='sale';
+  const agentRoster = agentRosterForPerformance();
   let agentShares = (Array.isArray(data.agentShares) && data.agentShares.length)
     ? data.agentShares.map(a=>({ name:a.name||'', percent:Number(a.percent||0) }))
-    : [{ name: data.agentName || SESSION.name, percent: existing? Number(data.agentSharePercent||40) : 40 }];
+    : [{ name: data.agentName || '', percent: existing? Number(data.agentSharePercent||40) : 40 }];
   const extraHtml = `
     ${showAgentShares? `
     <div class="section-label" style="margin-top:14px">🧾 تقسیم کمیسیون بین مشاوران</div>
@@ -1668,13 +1956,15 @@ function openContractModal(kind, existing){
     <div class="upload-box" id="contract-upload-box">📎 برای افزودن عکس قرارداد کلیک کنید</div>
     <input type="file" id="contract-file-input" accept="image/*" multiple style="display:none">
     <div class="photo-row" id="contract-photo-row"></div>`;
-  openFormModal((existing?'ویرایش':'ثبت')+' قرارداد '+meta.label, contractFields(kind), data, async (formData)=>{
+  openFormModal((existing?'ویرایش':'ثبت')+' قرارداد '+meta.label, contractFields(kind, data.agentName), data, async (formData)=>{
     formData.photos = photos;
     if(showAgentShares){
       const cleaned = agentShares.filter(a=>a.name && a.name.trim());
-      formData.agentShares = cleaned.length? cleaned : [{name: formData.agentName||SESSION.name, percent:40}];
+      // formData.agentName الزامی است و همیشه از انتخاب بالای فرم پر شده؛ اگر به هر دلیلی
+      // ردیف‌های تقسیم کمیسیون خالی مانده باشند، مشاورِ همان فیلد بالا با سهم ۴۰٪ (و ۶۰٪
+      // باقی‌مانده برای دفتر) به‌عنوان تنها سهم در نظر گرفته می‌شود.
+      formData.agentShares = cleaned.length? cleaned : [{name: formData.agentName, percent:40}];
       formData.agentSharePercent = formData.agentShares[0].percent;
-      if(!formData.agentName) formData.agentName = formData.agentShares[0].name;
     }
     delete formData.commissionManualValue; // فقط برای فرم لازم بود؛ عدد نهایی در commissionTotal ذخیره شده
     if(existing){
@@ -1691,14 +1981,19 @@ function openContractModal(kind, existing){
     if(!wrap) return;
     wrap.innerHTML = agentShares.map((a,i)=>`
       <div style="display:flex;gap:6px;margin-bottom:8px;align-items:center">
-        <input type="text" placeholder="نام مشاور" value="${esc(a.name)}" data-ash-name="${i}" style="flex:2;border:1.5px solid var(--line);border-radius:10px;padding:9px 10px;font-family:inherit;font-size:13.5px">
+        ${i===0
+          ? `<div style="flex:2;border:1.5px solid var(--line);border-radius:10px;padding:9px 10px;font-size:13.5px;background:var(--paper);color:${a.name?'var(--ink)':'var(--danger)'}">${esc(a.name||'ابتدا «مشاور مربوطه» را از بالا انتخاب کنید')}</div>`
+          : `<select data-ash-name="${i}" style="flex:2;border:1.5px solid var(--line);border-radius:10px;padding:9px 10px;font-family:inherit;font-size:13.5px">
+               <option value="">- انتخاب مشاور -</option>
+               ${agentRoster.map(n=>`<option value="${esc(n)}" ${a.name===n?'selected':''}>${esc(n)}</option>`).join('')}
+             </select>`}
         <input type="number" placeholder="سهم ٪" value="${a.percent||''}" data-ash-percent="${i}" style="flex:1;max-width:84px;border:1.5px solid var(--line);border-radius:10px;padding:9px 10px;font-family:inherit;font-size:13.5px">
-        ${agentShares.length>1? `<button type="button" class="btn btn-outline btn-sm" data-ash-remove="${i}">✕</button>`:''}
+        ${(agentShares.length>1 && i>0)? `<button type="button" class="btn btn-outline btn-sm" data-ash-remove="${i}">✕</button>`:''}
       </div>`).join('');
     const totalPct = agentShares.reduce((s,a)=>s+Number(a.percent||0),0);
     const totalEl = document.getElementById('agent-shares-total');
-    if(totalEl) totalEl.innerHTML = `جمع سهم مشاوران: <b>${totalPct}٪</b>` + (totalPct>100? ' — <span style="color:var(--danger)">⚠️ جمع سهم‌ها بیشتر از ۱۰۰٪ شده است</span>':'');
-    wrap.querySelectorAll('[data-ash-name]').forEach(el=> el.oninput = ()=>{ agentShares[+el.getAttribute('data-ash-name')].name = el.value; });
+    if(totalEl) totalEl.innerHTML = `جمع سهم مشاوران: <b>${totalPct}٪</b> — باقی‌مانده برای دفتر: <b>${Math.max(0,100-totalPct)}٪</b>` + (totalPct>100? ' — <span style="color:var(--danger)">⚠️ جمع سهم‌ها بیشتر از ۱۰۰٪ شده است</span>':'');
+    wrap.querySelectorAll('[data-ash-name]').forEach(el=> el.onchange = ()=>{ agentShares[+el.getAttribute('data-ash-name')].name = el.value; });
     wrap.querySelectorAll('[data-ash-percent]').forEach(el=> el.oninput = ()=>{ agentShares[+el.getAttribute('data-ash-percent')].percent = Number(el.value||0); renderAgentShareRows(); });
     wrap.querySelectorAll('[data-ash-remove]').forEach(el=> el.onclick = ()=>{ agentShares.splice(+el.getAttribute('data-ash-remove'),1); renderAgentShareRows(); });
   }
@@ -1716,6 +2011,15 @@ function openContractModal(kind, existing){
       renderAgentShareRows();
       const addBtn = document.getElementById('agent-shares-add');
       if(addBtn) addBtn.onclick = ()=>{ agentShares.push({name:'', percent:0}); renderAgentShareRows(); };
+      // نفر اول لیست تقسیم کمیسیون همیشه باید همان «مشاور مربوطه»ی انتخاب‌شده در بالای فرم
+      // باشد، نه چیزی دیگر (رفع باگ: قبلاً این کادر به‌طور پیش‌فرض نام مدیر دفتر بود).
+      const mainAgentSelect = document.querySelector('#dynamic-form [data-key="agentName"]');
+      if(mainAgentSelect){
+        mainAgentSelect.addEventListener('change', ()=>{
+          if(agentShares.length) agentShares[0].name = mainAgentSelect.value;
+          renderAgentShareRows();
+        });
+      }
     }
     const box = document.getElementById('contract-upload-box');
     const inp = document.getElementById('contract-file-input');
@@ -3356,6 +3660,13 @@ function renderApp(){
 }
 
 function logout(){
+  // اگر هنوز تغییری هست که موفق به ذخیره روی سرور نشده (مثلاً به‌خاطر قطع موقت اینترنت)
+  // و در پس‌زمینه در حال تلاش مجدد است، خروج نباید بی‌سروصدا آن را از بین ببرد.
+  if(__unsavedCollections.size>0){
+    if(!confirm('برخی تغییرات هنوز روی سرور ذخیره نشده‌اند (اتصال اینترنت ناپایدار است). اگر الان خارج شوید، این تغییرات ممکن است از دست بروند. مطمئنید می‌خواهید خارج شوید؟')) return;
+  }
+  Object.keys(__bgRetryTimers).forEach(k=>{ clearInterval(__bgRetryTimers[k]); delete __bgRetryTimers[k]; });
+  __unsavedCollections.clear(); updateUnsavedBanner();
   if(TOKEN){ apiFetch('/api/logout', {method:'POST'}).catch(()=>{}); }
   TOKEN=null; localStorage.removeItem('sl_token');
   SESSION=null; UI={page:'dashboard', tab:{}, search:{}, sort:{}, priceMin:{}, priceMax:{}, filterAgent:'', sidebarOpen:false, view:{}};
