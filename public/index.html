@@ -4,13 +4,15 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>اسپرلوس | مدیریت املاک</title>
-<!-- نکته‌ی مهم: قبلاً اینجا فونت Vazirmatn از fonts.googleapis.com بارگذاری می‌شد. این
-     دامنه از داخل ایران بدون فیلترشکن معمولاً در دسترس نیست یا خیلی کند/ناپایدار است،
-     و چون این یک <link> مسدودکننده‌ی رندر در <head> بود، تا وقتی مرورگر منتظر پاسخ آن
-     می‌ماند، کل صفحه سفید/خالی باقی می‌ماند — دقیقاً همان چیزی که باعث می‌شد سایت فقط
-     با فیلترشکن بالا بیاید. برای رفع کامل این مشکل، هیچ وابستگی به سرورهای گوگل نمانده؛
-     برنامه مستقیم به فونت Tahoma (که پشتیبانی خوبی از فارسی دارد) می‌رود، همان‌طور که
-     در font-family پایین‌تر (Tahoma, Arial) از قبل تعریف شده بود. -->
+<!-- فونت Vazirmatn (فونت فارسیِ زیباتر از Tahoma) — این‌بار به‌صورت «غیرمسدودکننده» بارگذاری
+     می‌شود: با preload+onload، مرورگر منتظر پاسخ گوگل نمی‌ماند و رندر صفحه اصلاً معطل آن
+     نمی‌شود؛ اگر هم fonts.googleapis.com به هر دلیلی در دسترس نباشد، صفحه بدون هیچ تأخیری
+     با همان Tahoma (فالبک تعریف‌شده در font-family پایین‌تر) نمایش داده می‌شود — یعنی نه
+     دیگر خطر سفید ماندن صفحه هست، نه فونت زشت Tahoma وقتی گوگل در دسترس است. -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;500;600;700&display=swap" onload="this.onload=null;this.rel='stylesheet'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;500;600;700&display=swap"></noscript>
 <style>
 :root{
   --navy:#152238;
@@ -1628,6 +1630,9 @@ function fileCardHtml(item, opts){
   const editFn = kind==='office' ? 'editOfficeFile' : 'editFile';
   const deleteFn = kind==='office' ? 'deleteOfficeFile' : 'deleteFile';
   const statusFn = kind==='office' ? 'setOfficeFileStatus' : 'setFileStatus';
+  // حذف فقط برای مدیر مجاز است — مستقل از readonly/kind، تا مدیر در هیچ بخش/پنلی از این
+  // قابلیت محروم نشود و مشاور در هیچ بخشی (حتی فایل‌های خودش) اجازه‌ی حذف نداشته باشد.
+  const canDelete = SESSION && SESSION.role==='admin';
   const kv=[];
   if(item.propType==='garden'){
     kv.push(['متراژ کل زمین', toFa(item.totalArea)+' متر']);
@@ -1697,8 +1702,8 @@ function fileCardHtml(item, opts){
       ${(opts.readonly && kind==='office') ? '' : `<label style="display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--muted)">وضعیت:
         <select onchange="${statusFn}('${item.id}', this.value)" style="padding:6px 8px;border-radius:8px;border:1px solid var(--line);background:var(--paper);font-size:12.5px">${fileStatusOptionsHtml(item)}</select>
       </label>`}
-      ${opts.readonly? '' : `<button class="btn btn-outline btn-sm" onclick="${editFn}('${item.id}')">✏️ ویرایش</button>
-      ${kind==='office'? `<button class="btn btn-danger btn-sm" onclick="${deleteFn}('${item.id}')">🗑 حذف</button>` : ''}`}
+      ${opts.readonly? '' : `<button class="btn btn-outline btn-sm" onclick="${editFn}('${item.id}')">✏️ ویرایش</button>`}
+      ${canDelete? `<button class="btn btn-danger btn-sm" onclick="${deleteFn}('${item.id}')">🗑 حذف</button>` : ''}
       <button class="btn btn-gold btn-sm" onclick='copyText(${JSON.stringify(fileCopyText(item))})'>📋 کپی مشخصات</button>
     </div>
   </div>`;
@@ -1709,6 +1714,8 @@ function customerCardHtml(item, opts){
   const kind = opts.kind || 'customer'; // 'customer' | 'office'
   const editFn = kind==='office' ? 'editOfficeCustomer' : 'editCustomer';
   const deleteFn = kind==='office' ? 'deleteOfficeCustomer' : 'deleteCustomer';
+  // حذف فقط برای مدیر — نگاه کنید به توضیح مشابه در fileCardHtml
+  const canDelete = SESSION && SESSION.role==='admin';
   const budget = item.dealType==='buy'
     ? `${toFa(item.budgetMin)} تا ${toFa(item.budgetMax)} تومان`
     : `رهن ${toFa(item.budgetRahn)} / اجاره ${toFa(item.budgetEjare)} تومان`;
@@ -1737,8 +1744,8 @@ function customerCardHtml(item, opts){
     <div class="meta-line"><span>${kind==='office'?'ثبت‌کننده':'مشاور'}: ${esc(item.agentName||'-')}</span><span>ثبت: ${faDate(item.createdAt)}</span></div>
     <div class="card-actions">
       ${opts.readonly? '' : `<button class="btn btn-outline btn-sm" onclick="${editFn}('${item.id}')">✏️ ویرایش</button>
-      <button class="btn btn-danger btn-sm" onclick="${deleteFn}('${item.id}')">🗑 حذف</button>
       ${kind==='office'? '' : `<input type="number" min="0" value="${item.followupDays||DB.settings.defaultFollowupDays||3}" style="width:56px;padding:6px;border-radius:8px;border:1px solid var(--line)" onchange="setFollowupDays('${item.id}', this.value)" title="دوره پیگیری (روز)">`}`}
+      ${canDelete? `<button class="btn btn-danger btn-sm" onclick="${deleteFn}('${item.id}')">🗑 حذف</button>` : ''}
       <button class="btn btn-gold btn-sm" onclick='copyText(${JSON.stringify(customerCopyText(item))})'>📋 کپی مشخصات</button>
     </div>
   </div>`;

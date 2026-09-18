@@ -602,7 +602,12 @@ const server = http.createServer(async (req, res) => {
       const body = await readBody(req);
       const added = Array.isArray(body.added) ? body.added : [];
       const updated = Array.isArray(body.updated) ? body.updated : [];
-      const removedIds = Array.isArray(body.removedIds) ? body.removedIds : [];
+      let removedIds = Array.isArray(body.removedIds) ? body.removedIds : [];
+      // حذفِ فایل ملکی یا مشتری فقط حق مدیر است؛ مشاور فقط اجازه‌ی افزودن/ویرایش دارد.
+      // این محدودیت سمت سرور است (نه فقط مخفی‌کردن دکمه در فرانت‌اند) تا با ارسال مستقیم
+      // درخواست هم قابل دور زدن نباشد.
+      const AGENT_NO_DELETE_KEYS = ['sl_files', 'sl_customers'];
+      if (authed.acc.role !== 'admin' && AGENT_NO_DELETE_KEYS.includes(key)) removedIds = [];
       // نکته: بین این خط (خواندن آخرین نسخه از cache) و ذخیره‌ی نهایی، هیچ await ای روی
       // خودِ آرایه انجام نمی‌شود؛ پس چون Node تک‌رشته‌ای است، درخواست دیگری نمی‌تواند
       // وسط این عملیات فاصله بیندازد و باعث تداخل شود (درست مثل مسیر امن status فایل).
