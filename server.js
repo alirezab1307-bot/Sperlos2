@@ -111,11 +111,16 @@ async function migrateLegacyIfNeeded() {
 
 // --- حالت MongoDB ---
 let mongoColl = null;
+let gridBucket = null; // برای ذخیره‌ی عکس‌ها به‌صورت فایل جدا (GridFS)، نه داخل سند JSON
+let ObjectIdCtor = null;
 async function mongoInit(uri) {
-  const { MongoClient } = require('mongodb'); // فقط وقتی لازم است بارگذاری می‌شود
+  const { MongoClient, GridFSBucket, ObjectId } = require('mongodb'); // فقط وقتی لازم است بارگذاری می‌شود
+  ObjectIdCtor = ObjectId;
   const client = new MongoClient(uri);
   await client.connect();
-  mongoColl = client.db('esperlous').collection('kv');
+  const db = client.db('esperlous');
+  mongoColl = db.collection('kv');
+  gridBucket = new GridFSBucket(db, { bucketName: 'photos' });
 }
 async function mongoLoadAll() {
   const docs = await mongoColl.find({}).toArray();
@@ -125,6 +130,78 @@ async function mongoLoadAll() {
 }
 async function mongoSaveKey(key, value) {
   await mongoColl.updateOne({ _id: key }, { $set: { value } }, { upsert: true });
+}
+
+/* ---------------------------------------------------------------
+   ذخیره‌ی عکس‌ها به‌صورت جدا از سندهای JSON
+   -----------------------------------------------------------------
+   قبلاً عکس قراردادها مستقیم به‌صورت متن base64 داخل آرایه‌ی همان کلید
+   (مثلاً sl_contracts_other) ذخیره می‌شد؛ چون در حالت MongoDB کل آرایه‌ی
+   یک کلید در «یک سند» ذخیره می‌شود و MongoDB سقف ۱۶ مگابایت برای هر سند
+   دارد، با انباشته شدن عکس‌ها به‌مرور به این سقف می‌رسیدیم و ذخیره‌سازی
+   با خطا متوقف می‌شد؛ ضمن این‌که هر ذخیره، کل آرایه (با همه‌ی عکس‌های
+   قبلی) را دوباره می‌نوشت و کند و کندتر می‌شد.
+   راه‌حل: هر عکس در محل جدای خودش ذخیره می‌شود (در MongoDB با GridFS که
+   محدودیت ۱۶ مگابایتی ندارد، در حالت فایل هم در یک پوشه‌ی جدا روی دیسک)
+   و فقط یک آدرس کوتاه (مثلاً /api/photos/abc123) داخل آرایه‌ی قرارداد
+   ذخیره می‌شود، نه خودِ عکس.
+   --------------------------------------------------------------- */
+const PHOTOS_DIR = path.join(DATA_DIR, 'photos');
+
+function parseDataUrl(dataUrl) {
+  const m = /^data:([\w/+.-]+);base64,([\s\S]+)$/.exec(dataUrl || '');
+  if (!m) return null;
+  return { mime: m[1], buffer: Buffer.from(m[2], 'base64') };
+}
+function extForMime(mime) {
+  if (mime === 'image/png') return 'png';
+  if (mime === 'image/webp') return 'webp';
+  return 'jpg';
+}
+async function savePhoto(dataUrl) {
+  const parsed = parseDataUrl(dataUrl);
+  if (!parsed) throw new Error('invalid_image');
+  if (BACKEND === 'mongo') {
+    return new Promise((resolve, reject) => {
+      const uploadStream = gridBucket.openUploadStream('photo', { contentType: parsed.mime });
+      uploadStream.end(parsed.buffer, (err) => {
+        if (err) return reject(err);
+        const id = uploadStream.id.toString();
+        resolve({ id, url: '/api/photos/' + id });
+      });
+    });
+  }
+  if (!fs.existsSync(PHOTOS_DIR)) await fs.promises.mkdir(PHOTOS_DIR, { recursive: true });
+  const id = crypto.randomBytes(12).toString('hex') + '.' + extForMime(parsed.mime);
+  await fs.promises.writeFile(path.join(PHOTOS_DIR, id), parsed.buffer);
+  return { id, url: '/api/photos/' + id };
+}
+function servePhoto(req, res, id) {
+  if (BACKEND === 'mongo') {
+    let objId;
+    try { objId = new ObjectIdCtor(id); } catch (e) { res.writeHead(404); return res.end('not found'); }
+    gridBucket.find({ _id: objId }).toArray().then((files) => {
+      if (!files.length) { res.writeHead(404); return res.end('not found'); }
+      res.writeHead(200, { 'Content-Type': files[0].contentType || 'image/jpeg', 'Cache-Control': 'public, max-age=31536000' });
+      gridBucket.openDownloadStream(objId).on('error', () => res.end()).pipe(res);
+    }).catch(() => { res.writeHead(404); res.end('not found'); });
+    return;
+  }
+  if (!/^[a-f0-9]+\.(jpg|png|webp)$/.test(id)) { res.writeHead(404); return res.end('not found'); }
+  const fp = path.join(PHOTOS_DIR, id);
+  fs.readFile(fp, (err, content) => {
+    if (err) { res.writeHead(404); return res.end('not found'); }
+    const ext = path.extname(fp).slice(1);
+    const mime = ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg';
+    res.writeHead(200, { 'Content-Type': mime, 'Cache-Control': 'public, max-age=31536000' });
+    res.end(content);
+  });
+}
+async function deletePhoto(id) {
+  try {
+    if (BACKEND === 'mongo') { await gridBucket.delete(new ObjectIdCtor(id)); }
+    else { await fs.promises.unlink(path.join(PHOTOS_DIR, id)); }
+  } catch (e) { /* اگر از قبل پاک شده بود یا id نامعتبر بود، بی‌اهمیت است */ }
 }
 
 async function storeGet(key) {
@@ -268,6 +345,13 @@ const server = http.createServer(async (req, res) => {
     return sendJson(res, 200, { ok: true, backend: BACKEND });
   }
 
+  /* ---------- نمایش عکس (بدون نیاز به توکن، چون تگ <img> هدر Authorization نمی‌فرستد؛
+     آدرس‌ها شامل یک شناسه‌ی تصادفیِ غیرقابل‌حدس هستند، همان سطح امنیتی حالت قبلی) ---------- */
+  if (/^\/api\/photos\/[^/]+$/.test(pathname) && req.method === 'GET') {
+    const id = pathname.split('/')[3];
+    return servePhoto(req, res, id);
+  }
+
   if (!pathname.startsWith('/api/')) {
     return serveStatic(req, res, pathname);
   }
@@ -312,6 +396,22 @@ const server = http.createServer(async (req, res) => {
     /* ---------- از این به بعد، همه چیز نیاز به توکن معتبر دارد ---------- */
     const authed = getAuthAccount(req);
     if (!authed) return sendJson(res, 401, { error: 'unauthorized' });
+
+    /* ---------- آپلود عکس (قرارداد و غیره) — عکس جدا از سند JSON ذخیره می‌شود، فقط آدرسش برمی‌گردد ---------- */
+    if (pathname === '/api/photos' && req.method === 'POST') {
+      const { data } = await readBody(req);
+      try {
+        const result = await savePhoto(data);
+        return sendJson(res, 200, result);
+      } catch (e) {
+        return sendJson(res, 400, { error: 'invalid_image' });
+      }
+    }
+    if (/^\/api\/photos\/[^/]+$/.test(pathname) && req.method === 'DELETE') {
+      const id = pathname.split('/')[3];
+      await deletePhoto(id);
+      return sendJson(res, 200, { ok: true });
+    }
 
     if (pathname === '/api/me' && req.method === 'GET') {
       return sendJson(res, 200, { account: publicAccount(authed.acc) });

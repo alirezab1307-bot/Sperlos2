@@ -4,8 +4,13 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>اسپرلوس | مدیریت املاک</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<!-- نکته‌ی مهم: قبلاً اینجا فونت Vazirmatn از fonts.googleapis.com بارگذاری می‌شد. این
+     دامنه از داخل ایران بدون فیلترشکن معمولاً در دسترس نیست یا خیلی کند/ناپایدار است،
+     و چون این یک <link> مسدودکننده‌ی رندر در <head> بود، تا وقتی مرورگر منتظر پاسخ آن
+     می‌ماند، کل صفحه سفید/خالی باقی می‌ماند — دقیقاً همان چیزی که باعث می‌شد سایت فقط
+     با فیلترشکن بالا بیاید. برای رفع کامل این مشکل، هیچ وابستگی به سرورهای گوگل نمانده؛
+     برنامه مستقیم به فونت Tahoma (که پشتیبانی خوبی از فارسی دارد) می‌رود، همان‌طور که
+     در font-family پایین‌تر (Tahoma, Arial) از قبل تعریف شده بود. -->
 <style>
 :root{
   --navy:#152238;
@@ -2025,12 +2030,21 @@ function openContractModal(kind, existing){
     const inp = document.getElementById('contract-file-input');
     if(box) box.onclick = ()=> inp.click();
     if(inp) inp.onchange = async ()=>{
-      for(const file of inp.files){
-        const dataUrl = await resizeImageFile(file, 900);
-        photos.push(dataUrl);
-      }
-      renderPhotoRow();
+      const files = Array.from(inp.files);
       inp.value='';
+      for(const file of files){
+        const dataUrl = await resizeImageFile(file, 900);
+        try{
+          // عکس را جدا آپلود می‌کنیم و فقط آدرس کوتاهش را در فرم نگه می‌داریم؛ این‌طوری
+          // خودِ عکس دیگر داخل رکورد بزرگ قرارداد ذخیره نمی‌شود (نگاه کنید به توضیح
+          // savePhoto در server.js)
+          const uploaded = await apiFetch('/api/photos', {method:'POST', body: JSON.stringify({data: dataUrl})});
+          photos.push(uploaded.url);
+          renderPhotoRow();
+        }catch(e){
+          toast('آپلود عکس ناموفق بود');
+        }
+      }
     };
   }, 0);
 }
