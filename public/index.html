@@ -2355,12 +2355,25 @@ function agentDataSnapshot(agentName){
     sazBank: DB.sazBank.filter(x=>x.agentName===agentName),
   };
 }
+// بک‌آپ کامل مخصوص مدیر: برخلاف بک‌آپ مشاور که فقط اطلاعات خودش را می‌گیرد، این یکی همه‌ی
+// فایل‌ها/مشتریان/مشارکت‌های همه‌ی مشاوران را با هم، به‌علاوه‌ی فایل‌ها و مشتریان دفتر، در یک
+// فایل جمع می‌کند — دقیقاً با همان ساختاری که ابزار «نمایشگر آفلاین بک‌آپ» می‌شناسد، پس مدیر
+// با گرفتن همین یک فایل، دیگر لازم نیست از تک‌تک مشاوران بک‌آپ جمع کند.
+function officeFullSnapshot(){
+  return {
+    exportedAt: nowIso(), agentName: 'کل دفتر (بک‌آپ مدیر)',
+    files: [...DB.files, ...DB.officeFiles],
+    customers: [...DB.customers, ...DB.officeCustomers],
+    mMelk: DB.mMelk, mSaz: DB.mSaz, sazBank: DB.sazBank,
+  };
+}
 async function doBackupDownload(){
-  const snap = agentDataSnapshot(SESSION.name);
+  const isAdmin = SESSION.role==='admin';
+  const snap = isAdmin ? officeFullSnapshot() : agentDataSnapshot(SESSION.name);
   const blob = new Blob([JSON.stringify(snap,null,2)], {type:'application/json'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  a.href=url; a.download = `backup-${SESSION.name}-${new Date().toISOString().slice(0,10)}.json`;
+  a.href=url; a.download = `backup-${isAdmin?'kol-daftar':SESSION.name}-${new Date().toISOString().slice(0,10)}.json`;
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   URL.revokeObjectURL(url);
   DB.backupMeta[SESSION.name] = nowIso();
@@ -2909,6 +2922,7 @@ function pageOfficeFiles(){
    صفحه بک‌آپ
    ========================================================================= */
 function pageBackup(){
+  const isAdmin = SESSION.role==='admin';
   const hrs = hoursSinceBackup(SESSION.name);
   return `
   <div class="stat-grid">
@@ -2918,12 +2932,14 @@ function pageBackup(){
   ${hrs>=24? `<div class="alarm-item urgent"><span>⚠️ بیش از ۲۴ ساعت از آخرین بک‌آپ گذشته. توصیه می‌شود همین حالا بک‌آپ بگیرید.</span></div>`:''}
   <div class="card" style="max-width:520px">
     <div class="card-title" style="margin-bottom:10px">📥 دانلود بک‌آپ</div>
-    <p style="font-size:13px;color:var(--muted);line-height:1.9">تمام فایل‌ها، مشتریان و اطلاعات مشارکت در ساختِ ثبت‌شده توسط شما در یک فایل JSON دانلود می‌شود. توصیه می‌شود هر ۲۴ ساعت یک‌بار این کار را انجام دهید.</p>
+    <p style="font-size:13px;color:var(--muted);line-height:1.9">${isAdmin
+      ? 'یک فایل JSON شامل <b>تمام فایل‌های ملکی، مشتریان و اطلاعات مشارکت‌ در ساخت مربوط به همه‌ی مشاوران و کل دفتر</b> دانلود می‌شود (نه فقط اطلاعات شخصی شما). این فایل با «نمایشگر آفلاین بک‌آپ اسپرلوس» قابل مشاهده است. توصیه می‌شود هر ۲۴ ساعت یک‌بار این کار را انجام دهید.'
+      : 'تمام فایل‌ها، مشتریان و اطلاعات مشارکت در ساختِ ثبت‌شده توسط شما در یک فایل JSON دانلود می‌شود. توصیه می‌شود هر ۲۴ ساعت یک‌بار این کار را انجام دهید.'}</p>
     <button class="btn btn-gold btn-block" onclick="doBackupDownload()">دانلود بک‌آپ اکنون</button>
   </div>
   <div class="card" style="max-width:520px;margin-top:14px">
     <div class="card-title" style="margin-bottom:10px">📤 بازیابی از بک‌آپ</div>
-    <p style="font-size:13px;color:var(--muted);line-height:1.9">فایل JSON بک‌آپ قبلی را انتخاب کنید تا اطلاعات آن به لیست فعلی اضافه شود.</p>
+    <p style="font-size:13px;color:var(--muted);line-height:1.9">فایل JSON بک‌آپ قبلی را انتخاب کنید تا اطلاعات آن به لیست فعلی اضافه شود.${isAdmin? ' (برای بازگرداندن فایل‌های دفتر از داخل یک بک‌آپ کل‌دفتر، بهتر است بعداً به‌صورت جداگانه انجام شود تا با فایل‌های شخصی مشاوران قاطی نشود.)':''}</p>
     <input type="file" accept="application/json" onchange="handleRestoreFile(this)">
   </div>`;
 }
@@ -3035,6 +3051,8 @@ function agentList(){
 }
 function pageAdminDashboard(){
   const agents = agentList();
+  const hrs = hoursSinceBackup(SESSION.name);
+  const backupWarn = hrs >= 24;
   const totalCommission = [...DB.cRent, ...DB.cSale, ...DB.cMosh].reduce((s,c)=>s+Number(c.commissionTotal||0),0);
   const soonExpiring = [...DB.cRent, ...DB.cOther].filter(c=>{
     if(!c.endDate) return false;
@@ -3042,6 +3060,7 @@ function pageAdminDashboard(){
     return daysBetween(new Date().toISOString(), c.endDate) <= alarmDays;
   }).sort((a,b)=> daysBetween(new Date().toISOString(),a.endDate) - daysBetween(new Date().toISOString(),b.endDate));
   return `
+  ${backupWarn?`<div class="alarm-item urgent"><span>⚠️ بیش از ۲۴ ساعت از آخرین بک‌آپ کل دفتر گذشته است. برای جلوگیری از از دست رفتن اطلاعات، بک‌آپ بگیرید.</span><button class="btn btn-primary btn-sm" onclick="UI.page='backup'; renderApp();">رفتن به بک‌آپ</button></div>`:''}
   <div class="stat-grid">
     <div class="stat-card"><div class="n">${DB.files.length}</div><div class="l">کل فایل‌های ثبت‌شده</div></div>
     <div class="stat-card"><div class="n">${DB.customers.length}</div><div class="l">کل مشتریان ثبت‌شده</div></div>
@@ -3575,6 +3594,7 @@ const ADMIN_NAV = [
   {id:'attendance', label:'ورود و خروج مشاوران', ic:'🕒'},
   {id:'chat', label:'گفتگو با مشاوران', ic:'💬'},
   {id:'accounting', label:'حسابداری', ic:'🧮'},
+  {id:'backup', label:'بک‌آپ کل اطلاعات دفتر', ic:'💾'},
   {id:'settings', label:'ظاهر و تنظیمات', ic:'⚙️'},
 ];
 const PAGE_TITLES = {
