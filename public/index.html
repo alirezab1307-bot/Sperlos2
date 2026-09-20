@@ -2550,7 +2550,10 @@ function matchGroupHtml(group, kind){
         <a class="phone-link" href="tel:${esc(cust.phone)}">☎ ${esc(cust.phone)}</a>
         ${isAdmin && !custIsOffice? `<div class="meta-line"><span>مشاور مشتری: ${esc(cust.agentName||'-')}</span></div>`:''}
       </div>
-      <span class="badge badge-navy">${toFa(group.matches.length)} فایل مرتبط</span>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
+        <span class="badge badge-navy">${toFa(group.matches.length)} فایل مرتبط</span>
+        <button class="btn btn-outline btn-sm" onclick="openCustomerDetailsModal('${cust.id}', ${custIsOffice})">🔍 جزئیات بیشتر مشتری</button>
+      </div>
     </div>
     ${custIsOffice? `<div class="hint" style="font-size:12px;margin:6px 0 0">🏢 این مشتری دفتر با فایل(های) شما مطابقت دارد</div>`:''}
     <div class="grid" style="margin-top:8px">${visible.map(renderOne).join('')}</div>
@@ -3910,6 +3913,44 @@ async function deleteAgentAccount(id){
    ویرایش نام‌کاربری/رمز خودم — فقط برای مدیر (مشاوران این اجازه را ندارند؛
    نام‌کاربری/رمز مشاوران را فقط مدیر از صفحه‌ی «مدیریت حساب مشاوران» تعیین می‌کند)
    ========================================================================= */
+// نمایش جزئیات کامل مشتری — برای وقتی که در جاهایی مثل «تطبیق فایل» فقط خلاصه‌ای از
+// مشخصات مشتری دیده می‌شود و نیاز به دیدن همه‌ی اطلاعات (بودجه، توضیحات، پیگیری و ...) است.
+function openCustomerDetailsModal(customerId, isOffice){
+  const item = (isOffice? DB.officeCustomers : DB.customers).find(c=>c.id===customerId);
+  if(!item){ toast('مشتری یافت نشد'); return; }
+  const budget = item.dealType==='buy'
+    ? `${toFa(item.budgetMin)} تا ${toFa(item.budgetMax)} تومان`
+    : `رهن ${toFa(item.budgetRahn)} / اجاره ${toFa(item.budgetEjare)} تومان`;
+  const nextContact = item.lastContact ? addDays(item.lastContact, item.followupDays||DB.settings.defaultFollowupDays||3) : null;
+  const overdue = nextContact && new Date(nextContact) <= new Date();
+  const root = document.getElementById('overlay-root');
+  root.innerHTML = `<div class="modal">
+    <h3>👤 جزئیات مشتری</h3>
+    <div class="card-top" style="margin-bottom:6px">
+      <div>
+        <div class="card-title">${esc(item.name||'بدون نام')}</div>
+        <a class="phone-link" href="tel:${esc(item.phone||'')}">☎ ${esc(item.phone||'-')}</a>
+      </div>
+      <span class="badge ${item.dealType==='buy'?'badge-gold':'badge-emerald'}">${item.dealType==='buy'?'خرید':'رهن و اجاره'} · ${propTypeLabel(item.propType)}</span>
+    </div>
+    <div class="kv">
+      <div><span class="k">متراژ مورد نظر</span><span class="v">${item.areaWanted?toFa(item.areaWanted)+' متر':'-'}</span></div>
+      <div><span class="k">خواب</span><span class="v">${item.bedroomsWanted||'-'}</span></div>
+    </div>
+    <div class="price-box"><div class="main-price">بودجه: ${budget}</div></div>
+    ${(item.dealType==='rent' && item.vacateDate) ? `<div class="meta-line" style="margin-top:2px"><span>🗓 تاریخ تخلیه: ${faDate(item.vacateDate)}</span></div>` : ''}
+    ${item.description?`<div class="desc-box">📝 ${esc(item.description)}</div>`:''}
+    ${isOffice? '' : `<div class="alarm-item ${overdue?'urgent':''}" style="margin-top:8px;padding:8px 10px;">
+      <span style="font-size:12px">⏰ پیگیری هر ${item.followupDays||DB.settings.defaultFollowupDays||3} روز | آخرین تماس: ${faDate(item.lastContact)}${overdue?' — <b>زمان تماس فرارسیده!</b>':''}</span>
+    </div>`}
+    <div class="meta-line"><span>${isOffice?'ثبت‌کننده':'مشاور'}: ${esc(item.agentName||'-')}</span><span>ثبت: ${faDate(item.createdAt)}</span></div>
+    <div class="modal-actions">
+      <button class="btn btn-outline" onclick="closeModal()">بستن</button>
+      <button class="btn btn-gold" onclick='copyText(${JSON.stringify(customerCopyText(item))})'>📋 کپی مشخصات</button>
+    </div>
+  </div>`;
+  root.classList.add('show');
+}
 function openMyAccountModal(){
   const root=document.getElementById('overlay-root');
   root.innerHTML=`<div class="modal"><h3>ویرایش اطلاعات ورود من</h3>
